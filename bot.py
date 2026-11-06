@@ -68,20 +68,43 @@ def fetch_railway_account_info(token: str):
         return None, str(e)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menampilkan menu utama."""
+    """Menampilkan menu utama dengan informasi akun, daftar proyek, dan jumlah project aktif."""
     user_id = str(update.effective_user.id)
     db = load_db()
     user_info = db.get(user_id)
 
+    # Ambil data proyek secara langsung jika token sudah terdaftar
+    projects_list = []
+    total_projects = 0
+    if user_info and "token" in user_info:
+        acc_data, err = fetch_railway_account_info(user_info["token"])
+        if not err and acc_data:
+            projects_list = acc_data.get("projects", [])
+            total_projects = len(projects_list)
+
+    # Susun teks menu utama sesuai permintaan
+    if user_info:
+        proj_names = ", ".join([p["name"] for p in projects_list[:3]]) if projects_list else "Belum ada proyek"
+        if len(projects_list) > 3:
+            proj_names += f" (dan {len(projects_list) - 3} lainnya)"
+            
+        status_text = (
+            f"🟢 **STATUS AKUN TERHUBUNG**\n"
+            f"• **Nama Sesi:** `{user_info.get('token_name')}`\n"
+            f"• **Tipe Akun:** `{user_info.get('account_type')}`\n"
+            f"• **Total Project Terpasang:** `{total_projects}`\n"
+            f"• **Daftar Project:** `{proj_names}`"
+        )
+    else:
+        status_text = "🔴 **STATUS:** Belum login / mendaftarkan token Railway."
+
     keyboard = [
-        [InlineKeyboardButton("🔑 Daftar / Ganti Token", callback_data="menu_token")],
+        [InlineKeyboardButton("➕ Masukin Token", callback_data="menu_token"), InlineKeyboardButton("📖 Tutorial Daftar", callback_data="menu_tutorial")],
         [InlineKeyboardButton("🚀 Buat & Deploy VPS", callback_data="menu_deploy")],
-        [InlineKeyboardButton("📂 Cek Proyek Railway", callback_data="menu_list_projects")],
+        [InlineKeyboardButton("📂 Cek & Kelola Proyek", callback_data="menu_list_projects")],
         [InlineKeyboardButton("ℹ️ Status Sesi", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    status_text = f"✅ Sesi Aktif: `{user_info['token_name']}`" if user_info else "⚠️ Belum login token Railway."
     
     welcome_text = (
         "🤖 **Bot Manager VPS & Railway Deployment**\n"
@@ -104,20 +127,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "menu_token":
         context.user_data['waiting_for_token'] = True
-        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
         await query.message.edit_text(
             "🔑 **Silakan Kirim Token Railway Anda**\n\n"
-            "Kirim dengan format:\n`NamaToken TokenRailway`\n\n"
-            "Contoh:\n`myvps rlwy_wksp_xxxx`",
+            "Kirim format dengan spasi:\n`NamaToken TokenRailway`\n\n"
+            "Contoh:\n`paier 35beedf9-xxxx-xxxx`",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
         
+    elif query.data == "menu_tutorial":
+        tutorial_text = (
+            "📖 **PANDUAN LENGKAP PENGGUNAAN BOT**\n\n"
+            "**1️⃣ Membuat Token Akun Railway:**\n"
+            "• Buka website Railway: `railway.com/account/tokens`\n"
+            "• Klik tombol Create Token / New Token.\n"
+            "• Pada Workspace, pilih Personal / My Projects.\n"
+            "• Salin token API yang dibuat.\n\n"
+            "**2️⃣ Menyimpan Token ke Bot:**\n"
+            "• Klik menu ➕ **Masukin Token** pada bot.\n"
+            "• Kirim format:\n"
+            "  `NamaToken TokenRailway`\n"
+            "  Contoh: `paier 35beedf9-xxxx-xxxx`\n\n"
+            "**3️⃣ Membuat & Mengakses VPS:**\n"
+            "• Klik 🚀 **Buat & Deploy VPS**.\n"
+            "• Bot akan mengonfigurasi instance dan memberikan detail login SSH."
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
+        await query.message.edit_text(tutorial_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        
     elif query.data == "menu_deploy":
         if user_id not in db:
-            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+            keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
             await query.message.edit_text(
-                "❌ **Token Belum Terdaftar!**\nSilakan daftarkan token Anda terlebih dahulu melalui menu **Daftar / Ganti Token**.",
+                "❌ **Token Belum Terdaftar!**\nSilakan daftarkan token Anda terlebih dahulu melalui menu **➕ Masukin Token**.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -131,7 +174,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif query.data == "menu_list_projects":
         if user_id not in db:
-            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+            keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
             await query.message.edit_text("❌ Token belum terdaftar.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
             
@@ -155,14 +198,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = "⚠️ Belum ada sesi token tersimpan."
             
-        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         
     elif query.data == "back_home":
         await start(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menangkap input token dan menyimpannya secara permanen."""
+    """Menangkap input token, menyimpannya permanen, lalu otomatis kembali ke menu awal."""
     user_id = str(update.message.from_user.id)
     text = update.message.text.strip()
     
@@ -171,7 +214,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) < 2:
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
             await update.message.reply_text(
-                "❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `myvps rlwy_wksp_xxxx`",
+                "❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `paier 35beedf9-xxxx-xxxx`",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -191,6 +234,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        # Simpan ke Database JSON (Permanen)
         db = load_db()
         db[user_id] = {
             "token_name": token_name,
@@ -201,22 +245,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['waiting_for_token'] = False
         
-        keyboard = [
-            [InlineKeyboardButton("🚀 Lanjut Buat VPS", callback_data="menu_deploy")],
-            [InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]
-        ]
+        # Kirim pemberitahuan berhasil dan langsung kembali ke menu awal
+        await verifying_msg.edit_text("✅ **Login Berhasil! Token Disimpan Permanen.** Mengalihkan ke menu utama...")
+        await asyncio.sleep(1.5)
         
-        await verifying_msg.edit_text(
-            f"✅ **LOGIN BERHASIL & SESI DISIMPAN PERMANEN!**\n\n"
-            f"• Nama Sesi: `{token_name}`\n"
-            f"• Tipe Token: `{acc_data['name']}`\n\n"
-            f"Sesi Anda aman dan tersimpan. Silakan tekan tombol **Lanjut Buat VPS** di bawah.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        # Panggil kembali fungsi start untuk merender menu utama lengkap dengan data akun & proyek
+        await start(update, context)
 
 async def execute_real_railway_deployment(status_msg, user_id):
-    """Membuat proyek, menghubungkan repo, mendeteksi deployment ID, dan membaca log deployment setiap 1 detik selama 3 menit."""
+    """Membuat proyek, menghubungkan repo, mendeteksi deployment ID, membaca log deploy, dan langsung mengirim data akses SSH tanpa teks command."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -340,8 +377,6 @@ async def execute_real_railway_deployment(status_msg, user_id):
         ]
 
         ssh_details = None
-        
-        # Query resmi Railway untuk mengambil log berdasarkan deploymentId
         deployment_log_query = {
             "query": """
             query DeploymentLogs($deploymentId: String!,$limit: Int) {
@@ -353,11 +388,9 @@ async def execute_real_railway_deployment(status_msg, user_id):
             "variables": {"deploymentId": deployment_id, "limit": 200}
         } if deployment_id else None
 
-        # Perulangan selama 180 detik (3 Menit), dicek setiap 1 detik
         for sec in range(1, 181):
             loader_anim = loaders[(sec // 3) % len(loaders)]
             
-            # Perbarui teks pesan Telegram setiap 5 detik sekali agar tidak terkena FloodWait
             if sec % 5 == 0 or sec == 1:
                 try:
                     await status_msg.edit_text(
@@ -371,7 +404,6 @@ async def execute_real_railway_deployment(status_msg, user_id):
                 except Exception:
                     pass
 
-            # Cek log setiap 1 detik secara konsisten
             combined_logs = ""
             if deployment_log_query and deployment_id:
                 try:
@@ -382,14 +414,13 @@ async def execute_real_railway_deployment(status_msg, user_id):
                 except Exception:
                     pass
             
-            # Jika teks SSH Access Details atau SSH Command ditemukan, langsung hentikan loop dan kirim data[span_2](start_span)[span_2](end_span)
-            if "SSH ACCESS DETAILS" in combined_logs or "SSH Command:" in combined_logs or "Password" in combined_logs:
+            if "SSH ACCESS DETAILS" in combined_logs or "Password" in combined_logs:
                 ssh_details = combined_logs
                 break
 
-            await asyncio.sleep(1) # Jeda persis 1 detik per cek log
+            await asyncio.sleep(1)
 
-        keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="back_home")]]
         
         if ssh_details:
             lines = ssh_details.split("\n")
@@ -400,15 +431,15 @@ async def execute_real_railway_deployment(status_msg, user_id):
                     capture = True
                 if capture:
                     filtered_lines.append(line)
-                    if "ssh root@" in line or "-p " in line:
-                        pass
+                    if "Password" in line:
+                        break
             
-            clean_log = "\n".join(filtered_lines[:15]) if filtered_lines else ssh_details[-600:]
+            clean_log = "\n".join(filtered_lines) if filtered_lines else ssh_details[-600:]
             
             await status_msg.edit_text(
-                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)\n\n"
+                f"🎉 **VPS BERHASIL DI-DEPLOY & ONLINE!**\n\n"
                 f"📂 **Proyek:** `{project_name}`\n\n"
-                f"🔑 **DATA AKSES SSH & COMMAND ANDA:**[span_5](start_span)[span_5](end_span)\n"
+                f"🔑 **DETAIL AKSES SSH:**\n"
                 f"```text\n{clean_log}\n```",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
@@ -422,7 +453,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
             )
 
     except Exception as e:
-        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
         await status_msg.edit_text(f"❌ **Terjadi Kesalahan:**\n`{str(e)}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def show_projects_list(message, user_id):
@@ -452,7 +483,7 @@ async def show_projects_list(message, user_id):
         edges = res.get("data", {}).get("projects", {}).get("edges", [])
         
         if not edges:
-            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+            keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
             await message.edit_text("📂 Belum ada proyek yang ditemukan di akun Railway Anda.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
             
@@ -465,11 +496,11 @@ async def show_projects_list(message, user_id):
             text += f"• **{proj_name}** (`{proj_id[:8]}...`)\n"
             keyboard.append([InlineKeyboardButton(f"🗑 Hapus Proyek: {proj_name}", callback_data=f"delete_proj_{proj_id}")])
             
-        keyboard.append([InlineKeyboardButton("🔙 Kembali", callback_data="back_home")])
+        keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")])
         await message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         
     except Exception as e:
-        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
         await message.edit_text(f"❌ Gagal mengambil daftar proyek: `{str(e)}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def delete_railway_project(query, user_id, proj_id):
@@ -497,7 +528,7 @@ async def delete_railway_project(query, user_id, proj_id):
             await query.message.edit_text(f"❌ Gagal menghapus proyek: `{err}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="menu_list_projects")]]))
             return
             
-        keyboard = [[InlineKeyboardButton("📂 Lihat Daftar Proyek", callback_data="menu_list_projects")], [InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("📂 Lihat Daftar Proyek", callback_data="menu_list_projects")], [InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="back_home")]]
         await query.message.edit_text("🗑 **PROYEK BERHASIL DIHAPUS DARI RAILWAY!**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         
     except Exception as e:
@@ -505,7 +536,7 @@ async def delete_railway_project(query, user_id, proj_id):
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Official Deployment Logs)...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Final Integrated Version)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
