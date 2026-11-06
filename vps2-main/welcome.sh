@@ -1,7 +1,15 @@
 #!/bin/bash
-# SSH Login Banner - Ubuntu ASCII Logo & Clean Side-by-Side Specs
+# SSH Login Banner - Clean Monochromatic Lightning Bolt & Specs
 
 [ -t 1 ] || return 0 2>/dev/null || exit 0
+
+# Sembunyikan pesan default MOTD Ubuntu ("Welcome to Ubuntu...")
+if [ -d /etc/update-motd.d ]; then
+    for f in /etc/update-motd.d/*; do
+        [ -f "$f" ] && chmod -x "$f" 2>/dev/null
+    done
+fi
+[ -f /etc/motd ] && echo "" > /etc/motd
 
 # Variabel Sistem
 _os="$( . /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-Ubuntu 24.04}" )"
@@ -17,18 +25,16 @@ _api_port="${PORT:-8080}"
 
 printf '\n'
 
-# Menampilkan Logo ASCII Ubuntu di Kiri dan Spesifikasi di Kanan secara Berdampingan
-cat << EOF
-       _-----_       User   : ${_user}@${_host}
-      (       \\      OS     : ${_os}
-    __-\\-_--_-_/__    Kernel : ${_kernel}
-   (               )   Uptime : ${_uptime}
-  /                 \\  CPU    : ${_cpu} (${_cores} cores)
- |                   | Memory : ${_mem}
- |                   | Disk   : ${_disk}
-  \\                 /  Port   : ${_api_port} (Railway HTTP Ingress)
-   \\___-___-___-___/  
-EOF
+# Layout Berdampingan: Icon Petir (Lightning) di Kiri & Spesifikasi Sistem di Kanan
+printf "         ⚡          User   : %s@%s\n" "$_user" "$_host"
+printf "        ⚡⚡         OS     : %s\n" "$_os"
+printf "       ⚡⚡⚡        Kernel : %s\n" "$_kernel"
+printf "      ⚡⚡⚡⚡       Uptime : %s\n" "$_uptime"
+printf "     ⚡⚡⚡⚡⚡      CPU    : %s (%s cores)\n" "$_cpu" "$_cores"
+printf "    ⚡⚡⚡⚡⚡⚡     Memory : %s\n" "$_mem"
+printf "         ⚡⚡        Disk   : %s\n" "$_disk"
+printf "         ⚡⚡        Port   : %s (Railway HTTP Ingress)\n" "$_api_port"
+printf "         ⚡⚡        \n"
 
 printf '\n'
 printf '  ────────────────────────────────────────────────────────────\n'
