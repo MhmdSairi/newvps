@@ -124,8 +124,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         status_msg = await query.message.edit_text(
-            "🚀 **Memulai Proses Deploy vps2-main...**\n"
-            "⏳ `[1/4]` Menyiapkan proyek di server Railway...",
+            "🚀 **Memulai Inisialisasi Proyek VPS...**",
             parse_mode="Markdown"
         )
         await execute_real_railway_deployment(status_msg, user_id)
@@ -218,7 +217,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_real_railway_deployment(status_msg, user_id):
-    """Membuat proyek, mengatur rootDirectory, memicu deploy, menunggu selesai, dan mengambil log SSH."""
+    """Membuat proyek, mengatur rootDirectory, memicu deploy, menampilkan animasi loading, dan mengambil log SSH."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -229,7 +228,6 @@ async def execute_real_railway_deployment(status_msg, user_id):
     
     try:
         # 1. Buat Proyek Baru
-        await status_msg.edit_text("🚀 **Proses Deploy (1/4):** Membuat proyek baru di Railway...", parse_mode="Markdown")
         create_project_query = {
             "query": "mutation { projectCreate(input: { name: \"VPS-Manager-Deploy\" }) { id name environments { edges { node { id } } } } }"
         }
@@ -245,7 +243,6 @@ async def execute_real_railway_deployment(status_msg, user_id):
         env_id = proj_data.get("environments", {}).get("edges", [])[0]["node"]["id"]
 
         # 2. Buat Service dari Repo newvps
-        await status_msg.edit_text("🚀 **Proses Deploy (2/4):** Menghubungkan repository `newvps`...", parse_mode="Markdown")
         create_service_query = {
             "query": """
             mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -273,7 +270,6 @@ async def execute_real_railway_deployment(status_msg, user_id):
         service_id = serv_res.get("data", {}).get("serviceCreate", {}).get("id")
 
         # 3. Atur Root Directory ke "vps2-main" dan Picu Deploy
-        await status_msg.edit_text("🚀 **Proses Deploy (3/4):** Mengatur direktori `vps2-main` & memicu build...", parse_mode="Markdown")
         update_instance_query = {
             "query": """
             mutation ServiceInstanceUpdate($serviceId: String!, $environmentId: String!,$input: ServiceInstanceUpdateInput!) {
@@ -298,33 +294,57 @@ async def execute_real_railway_deployment(status_msg, user_id):
         }
         requests.post(url, json=deploy_query, headers=headers, timeout=30)
 
-        # 4. Loading & Menunggu Deploy Selesai Sambil Mengambil Log SSH
-        await status_msg.edit_text(
-            "⏳ **Proses Deploy (4/4):** Sedang melakukan *building* dan konfigurasi VPS di cloud...\n"
-            "🔄 Bot sedang memantau log secara real-time. Mohon tunggu sekitar 30-60 detik...",
-            parse_mode="Markdown"
-        )
+        # 4. Animasi Loading & Menunggu Deploy Selesai (Hingga 5 Menit / 30 Iterasi x 10 Detik)
+        loaders = [
+            "📦 `[■□□□□□□□□□]` 10%",
+            "📦 `[■■□□□□□□□□]` 20%",
+            "📦 `[■■■□□□□□□□]` 30%",
+            "📦 `[■■■■□□□□□□]` 40%",
+            "📦 `[■■■■■□□□□□]` 50%",
+            "📦 `[■■■■■■□□□□]` 60%",
+            "📦 `[■■■■■■■□□□]` 70%",
+            "📦 `[■■■■■■■■□□]` 80%",
+            "📦 `[■■■■■■■■■□]` 90%",
+            "📦 `[■■■■■■■■■■]` 100%"
+        ]
 
         ssh_details = None
-        for _ in range(20):  # Cek selama maksimal 20 kali (tiap 5 detik)
-            await asyncio.sleep(5)
-            log_query = {
-                "query": """
-                query DeploymentLogs($environmentId: String!,$serviceId: String!) {
-                  deploymentLogs(environmentId: $environmentId, serviceId:$serviceId) {
-                    message
-                  }
-                }
-                """,
-                "variables": {"environmentId": env_id, "serviceId": service_id}
+        log_query = {
+            "query": """
+            query DeploymentLogs($environmentId: String!,$serviceId: String!) {
+              deploymentLogs(environmentId: $environmentId, serviceId:$serviceId) {
+                message
+              }
             }
+            """,
+            "variables": {"environmentId": env_id, "serviceId": service_id}
+        }
+
+        for i in range(30):  # Total waktu maksimal 5 menit (30 x 10 detik)
+            loader_anim = loaders[i % len(loaders)]
+            elapsed_time = (i + 1) * 10
+            
+            try:
+                await status_msg.edit_text(
+                    f"🚀 **Penginstalan Railway Ubuntu 24.04 VPS sedang berjalan mohon ditunggu 2-3 menit**\n\n"
+                    f"{loader_anim}\n"
+                    f"⏱️ Waktu berlalu: `{elapsed_time} detik` (Maks. 5 menit)\n"
+                    f"📂 Proyek: `{project_name}`\n\n"
+                    f"_Bot sedang membaca log secara real-time hingga detail SSH muncul..._",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
+            await asyncio.sleep(10)
+
+            # Ambil log terbaru dari Railway
             log_res = requests.post(url, json=log_query, headers=headers, timeout=30).json()
             logs = log_res.get("data", {}).get("deploymentLogs", [])
-            
             full_log_text = "\n".join([item.get("message", "") for item in logs])
             
-            # Cek apakah string "SSH ACCESS DETAILS" sudah muncul di log
-            if "SSH ACCESS DETAILS" in full_log_text:
+            # Cek apakah string penanda SSH Access Details sudah muncul
+            if "SSH ACCESS DETAILS" in full_log_text or "Password" in full_log_text:
                 ssh_details = full_log_text
                 break
 
@@ -341,13 +361,12 @@ async def execute_real_railway_deployment(status_msg, user_id):
                 if capture:
                     filtered_lines.append(line)
                     if "Password" in line or "SSH Command" in line:
-                        # Ambil beberapa baris tambahan jika perlu lalu stop
                         pass
             
-            clean_log = "\n".join(filtered_lines[:15]) # Batasi agar rapi
+            clean_log = "\n".join(filtered_lines[:15]) # Ambil batas baris yang rapi
             
             await status_msg.edit_text(
-                f"🎉 **DEPLOYMENT vps2-main BERHASIL & ONLINE!**[span_2](start_span)[span_2](end_span)\n\n"
+                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_1](start_span)[span_1](end_span)\n\n"
                 f"📂 **Proyek:** `{project_name}`\n\n"
                 f"🔑 **DATA AKSES SSH ANDA:**\n"
                 f"```text\n{clean_log}\n```",
@@ -356,9 +375,8 @@ async def execute_real_railway_deployment(status_msg, user_id):
             )
         else:
             await status_msg.edit_text(
-                f"🎉 **PROSES DEPLOY SELESAI!**\n\n"
-                f"Proyek `{project_name}` berhasil dibuat dan dideploy.\n"
-                f"⚠️ *Catatan:* Log akses SSH belum tertangkap otomatis, silakan cek detail lengkapnya langsung di Dashboard Railway Anda.",
+                f"⚠️ **Waktu Tunggu Maksimal Tercapai (5 Menit)**\n\n"
+                f"Proyek `{project_name}` telah dibuat dan dideploy, namun log SSH belum sempat tertangkap otomatis oleh bot. Silakan cek detail akses langsung melalui Dashboard Railway Anda.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
