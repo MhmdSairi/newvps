@@ -2,7 +2,6 @@ import asyncio
 import logging
 import json
 import os
-import subprocess
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -20,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_BOT_TOKEN = "9222260820:AAHBD11K_t_jRd05pDmo3KSA3z-Zw7hyC9s"  # Ganti dengan token bot baru Anda jika perlu
+TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
 ADMIN_TELEGRAM_ID = 1564275538
 DB_FILE = "railway_users.json"
 
@@ -33,12 +32,23 @@ def load_db():
                 return json.load(f)
         except Exception as e:
             logger.error(f"Gagal membaca database: {e}")
+    
+    env_backup = os.environ.get("BOT_PERSISTENT_DB")
+    if env_backup:
+        try:
+            data = json.loads(env_backup)
+            save_db(data)
+            return data
+        except Exception as e:
+            logger.error(f"Gagal memuat DB dari ENV: {e}")
+            
     return {}
 
 def save_db(data):
     try:
         with open(DB_FILE, "w") as f:
             json.dump(data, f, indent=4)
+        os.environ["BOT_PERSISTENT_DB"] = json.dumps(data)
     except Exception as e:
         logger.error(f"Gagal menyimpan database: {e}")
 
@@ -104,7 +114,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "login_railway":
         USER_SESSIONS[chat_id] = {'status': 'AWAITING_TOKEN_NAME'}
-        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU", callback_data="back_to_home", style="primary")]]
+        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
         await query.message.edit_text(
             "🔑 **LOGIN TOKEN RAILWAY**\n\n"
             "Langkah 1/2: Silakan ketik **Nama Token / Nama Anda** untuk identifikasi sesi ini:",
@@ -115,13 +125,13 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "help_token":
         keyboard = [
             [InlineKeyboardButton("🔑 LOGIN SEKARANG", callback_data="login_railway", style="success")],
-            [InlineKeyboardButton("🏠 KEMBALI KE MENU", callback_data="back_to_home", style="primary")]
+            [InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]
         ]
         await query.message.edit_text(
             "ℹ️ **CARA MENDAPATKAN TOKEN RAILWAY:**\n\n"
             "1. Buka dashboard Railway (railway.com).\n"
             "2. Masuk ke **Account Settings** atau **Workspace Tokens**.\n"
-            "3. Buat token baru (biasanya berformat `rlwy_wksp_...` atau sejenisnya).\n"
+            "3. Buat token baru (berformat `rlwy_wksp_...`).\n"
             "4. Salin token tersebut dan masukkan ke bot saat diminta.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
@@ -142,17 +152,13 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            # Simulasi proses kloning / penyiapan file repo publik GitHub Anda
-            repo_url = "https://github.com/USERNAME_ANDA/vps2-main.git" # Ganti dengan link github public Anda
             folder_name = f"deploy_{chat_id}"
-            
-            # Jika folder sudah ada, bersihkan dulu
             if os.path.exists(folder_name):
                 os.system(f"rm -rf {folder_name}")
 
-            # Clone repository publik
+            # Clone repository publik GitHub Anda
             process = await asyncio.create_subprocess_shell(
-                f"git clone https://github.com/MhmdSairi/vps2-main.git {folder_name}", # Sesuaikan link github Anda
+                f"git clone https://github.com/MhmdSairi/vps2-main.git {folder_name}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -161,11 +167,10 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(
                 "⏳ **MEMPROSES DEPLOYMENT OTO-VPS**\n\n"
                 "✅ `[1/3]` Berhasil mengunduh file repository.\n"
-                "🔄 `[2/3]` Melakukan autentikasi & inisialisasi Railway CLI...",
+                "🔄 `[2/3]` Melakukan autentikasi & inisialisasi Railway...",
                 parse_mode="Markdown"
             )
 
-            # Jalankan deploy menggunakan Railway Token (`RAILWAY_TOKEN`)
             os.chdir(folder_name)
             deploy_process = await asyncio.create_subprocess_shell(
                 f"export RAILWAY_TOKEN={railway_token} && railway up --detach",
@@ -173,15 +178,16 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await deploy_process.communicate()
-            os.chdir("..") # Kembali ke folder utama
+            os.chdir("..")
 
+            keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
             await status_msg.edit_text(
                 "🎉 **DEPLOYMENT BERHASIL DIEKSEKUSI!**\n\n"
                 "✅ `[1/3]` File repository diunduh.\n"
                 "✅ `[2/3]` Autentikasi Railway sukses.\n"
-                "✅ `[3/3]` Perintah `railway up` berhasil dikirim!\n\n"
+                "✅ `[3/3]` Perintah deploy berhasil dikirim!\n\n"
                 "💡 *VPS installer Anda sedang berjalan di cloud Railway.*",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]),
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
 
@@ -230,7 +236,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         USER_SESSIONS[chat_id]['token_name'] = text
         USER_SESSIONS[chat_id]['status'] = 'AWAITING_RAILWAY_TOKEN'
         
-        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU", callback_data="back_to_home", style="primary")]]
+        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
         await update.message.reply_text(
             f"✅ Nama Token dicatat: `{text}`\n\n"
             "Langkah 2/2: Sekarang silakan ketik / kirim **Token Railway** Anda (contoh: `rlwy_wksp_...`):",
@@ -249,7 +255,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_db(db)
 
-        # Bersihkan sesi sementara
         if chat_id in USER_SESSIONS:
             del USER_SESSIONS[chat_id]
 
@@ -266,4 +271,13 @@ async def main():
     logger.info("Bot Deploy VPS Railway berjalan...")
     await app.initialize()
     await app.start()
-    await app.updater.start
+    await app.updater.start_polling()
+    
+    stop_event = asyncio.Event()
+    await stop_event.wait()
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot dihentikan.")
