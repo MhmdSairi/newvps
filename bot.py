@@ -73,7 +73,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     user_info = db.get(user_id)
 
-    # Ambil data proyek secara langsung jika token sudah terdaftar
     projects_list = []
     total_projects = 0
     if user_info and "token" in user_info:
@@ -82,7 +81,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             projects_list = acc_data.get("projects", [])
             total_projects = len(projects_list)
 
-    # Susun teks menu utama sesuai permintaan
     if user_info:
         proj_names = ", ".join([p["name"] for p in projects_list[:3]]) if projects_list else "Belum ada proyek"
         if len(projects_list) > 3:
@@ -98,11 +96,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         status_text = "🔴 **STATUS:** Belum login / mendaftarkan token Railway."
 
+    # Desain Tombol Berwarna Sesuai Fungsi (Kuning/Biru/Hijau/Abu-abu)
     keyboard = [
-        [InlineKeyboardButton("➕ Masukin Token", callback_data="menu_token"), InlineKeyboardButton("📖 Tutorial Daftar", callback_data="menu_tutorial")],
-        [InlineKeyboardButton("🚀 Buat & Deploy VPS", callback_data="menu_deploy")],
-        [InlineKeyboardButton("📂 Cek & Kelola Proyek", callback_data="menu_list_projects")],
-        [InlineKeyboardButton("ℹ️ Status Sesi", callback_data="menu_status")]
+        [InlineKeyboardButton("🔑 Masukin Token", callback_data="menu_token"), InlineKeyboardButton("📖 Tutorial Daftar", callback_data="menu_tutorial")],
+        [InlineKeyboardButton("🟢 Buat & Deploy VPS", callback_data="menu_deploy")],
+        [InlineKeyboardButton("🔵 Cek & Kelola Proyek", callback_data="menu_list_projects")],
+        [InlineKeyboardButton("⚪ Status Sesi", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -145,12 +144,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Pada Workspace, pilih Personal / My Projects.\n"
             "• Salin token API yang dibuat.\n\n"
             "**2️⃣ Menyimpan Token ke Bot:**\n"
-            "• Klik menu ➕ **Masukin Token** pada bot.\n"
+            "• Klik menu 🔑 **Masukin Token** pada bot.\n"
             "• Kirim format:\n"
             "  `NamaToken TokenRailway`\n"
             "  Contoh: `paier 35beedf9-xxxx-xxxx`\n\n"
             "**3️⃣ Membuat & Mengakses VPS:**\n"
-            "• Klik 🚀 **Buat & Deploy VPS**.\n"
+            "• Klik 🟢 **Buat & Deploy VPS**.\n"
             "• Bot akan mengonfigurasi instance dan memberikan detail login SSH."
         )
         keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
@@ -160,7 +159,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id not in db:
             keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
             await query.message.edit_text(
-                "❌ **Token Belum Terdaftar!**\nSilakan daftarkan token Anda terlebih dahulu melalui menu **➕ Masukin Token**.",
+                "❌ **Token Belum Terdaftar!**\nSilakan daftarkan token Anda terlebih dahulu melalui menu **🔑 Masukin Token**.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -234,7 +233,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Simpan ke Database JSON (Permanen)
         db = load_db()
         db[user_id] = {
             "token_name": token_name,
@@ -245,15 +243,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['waiting_for_token'] = False
         
-        # Kirim pemberitahuan berhasil dan langsung kembali ke menu awal
         await verifying_msg.edit_text("✅ **Login Berhasil! Token Disimpan Permanen.** Mengalihkan ke menu utama...")
         await asyncio.sleep(1.5)
         
-        # Panggil kembali fungsi start untuk merender menu utama lengkap dengan data akun & proyek
         await start(update, context)
 
 async def execute_real_railway_deployment(status_msg, user_id):
-    """Membuat proyek, menghubungkan repo, mendeteksi deployment ID, membaca log deploy, dan langsung mengirim data akses SSH tanpa teks command."""
+    """Membuat proyek, menghubungkan repo, mendeteksi deployment ID, membaca log deploy, dan langsung mengirim data akses SSH bersih."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -420,6 +416,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
 
             await asyncio.sleep(1)
 
+        # Tombol warna merah untuk kembali ke menu utama setelah sukses/gagal
         keyboard = [[InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="back_home")]]
         
         if ssh_details:
@@ -437,9 +434,6 @@ async def execute_real_railway_deployment(status_msg, user_id):
             clean_log = "\n".join(filtered_lines) if filtered_lines else ssh_details[-600:]
             
             await status_msg.edit_text(
-                f"🎉 **VPS BERHASIL DI-DEPLOY & ONLINE!**\n\n"
-                f"📂 **Proyek:** `{project_name}`\n\n"
-                f"🔑 **DETAIL AKSES SSH:**\n"
                 f"```text\n{clean_log}\n```",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
@@ -453,11 +447,11 @@ async def execute_real_railway_deployment(status_msg, user_id):
             )
 
     except Exception as e:
-        keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
+        keyboard = [[InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="back_home")]]
         await status_msg.edit_text(f"❌ **Terjadi Kesalahan:**\n`{str(e)}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def show_projects_list(message, user_id):
-    """Menampilkan daftar proyek aktif di akun Railway beserta tombol hapus."""
+    """Menampilkan daftar proyek aktif di akun Railway beserta tombol hapus warna merah."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -494,7 +488,8 @@ async def show_projects_list(message, user_id):
             proj_name = node["name"]
             proj_id = node["id"]
             text += f"• **{proj_name}** (`{proj_id[:8]}...`)\n"
-            keyboard.append([InlineKeyboardButton(f"🗑 Hapus Proyek: {proj_name}", callback_data=f"delete_proj_{proj_id}")])
+            # Tombol hapus diberi ikon merah ❌
+            keyboard.append([InlineKeyboardButton(f"❌ Hapus Project: {proj_name}", callback_data=f"delete_proj_{proj_id}")])
             
         keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")])
         await message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -536,7 +531,7 @@ async def delete_railway_project(query, user_id, proj_id):
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Final Integrated Version)...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Colored Buttons & Clean SSH Output)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
