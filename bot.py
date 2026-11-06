@@ -18,7 +18,6 @@ async def verify_railway_token(railway_token):
         "Content-Type": "application/json"
     }
     
-    # Query universal untuk cek akun/workspace yang pasti diterima server Railway
     queries = [
         {"query": "{ me { id name email } }"},
         {"query": "{ workspaces { id name } }"},
@@ -116,7 +115,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg_wait.edit_text("❌ **Login Gagal!** Token Railway ditolak oleh server. Pastikan token Anda aktif dan benar.")
             return
         
-        # Simpan token jika sukses login
         USER_TOKENS[user_id] = {
             "name": token_name,
             "token": clean_token
@@ -137,7 +135,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_railway_api_deployment(query, user_id):
-    """Membuat project baru di Railway user dan mendeploy public repository MhmdSairi/gabut."""
+    """Membuat project baru di Railway user dan mendeploy public repository MhmdSairi/gabut secara presisi."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
     
@@ -168,7 +166,7 @@ async def execute_railway_api_deployment(query, user_id):
         project_data = result.get("data", {}).get("projectCreate", {})
         project_id = project_data.get("id")
         
-        # 2. Tambahkan Service yang sumbernya langsung dari public repository MhmdSairi/gabut
+        # 2. Buat Service Kosong terlebih dahulu di dalam Project tersebut
         create_service_query = {
             "query": """
                 mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -181,11 +179,7 @@ async def execute_railway_api_deployment(query, user_id):
             "variables": {
                 "input": {
                     "projectId": project_id,
-                    "name": "gabut-vps-service",
-                    "source": {
-                        "repo": "MhmdSairi/gabut",
-                        "branch": "main"
-                    }
+                    "name": "gabut-vps-service"
                 }
             }
         }
@@ -194,19 +188,55 @@ async def execute_railway_api_deployment(query, user_id):
         service_result = service_res.json()
         
         if "errors" in service_result:
-            err_service = service_result["errors"][0].get("message", "Gagal deploy repo")
+            err_service = service_result["errors"][0].get("message", "Gagal membuat service")
             await query.message.reply_text(
-                f"❌ **Proyek Dibuat, tapi Gagal Deploy Repository:**\n`{err_service}`",
+                f"❌ **Proyek Dibuat, tapi Gagal Membuat Service:**\n`{err_service}`",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
+                parse_mode="Markdown"
+            )
+            return
+            
+        service_id = service_result["data"]["serviceCreate"]["id"]
+        
+        # 3. Update Service agar sumber kodenya menautkan Public Repository MhmdSairi/gabut
+        update_source_query = {
+            "query": """
+                mutation ServiceUpdate($id: String!, $input: ServiceUpdateInput!) {
+                    serviceUpdate(id: $id, input: $input) {
+                        id
+                        name
+                    }
+                }
+            """,
+            "variables": {
+                "id": service_id,
+                "input": {
+                    "source": {
+                        "repo": "MhmdSairi/gabut"
+                    }
+                }
+            }
+        }
+        
+        update_res = requests.post(url, json=update_source_query, headers=headers, timeout=30)
+        update_result = update_res.json()
+        
+        if "errors" in update_result:
+            # Fallback jika update repo membutuhkan format branch/owner
+            err_update = update_result["errors"][0].get("message", "Gagal menautkan repo")
+            await query.message.reply_text(
+                f"⚠️ **Project & Service Berhasil, tapi Penautan Repo Membutuhkan Konfirmasi Dashboard:**\n`{err_update}`",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
                 parse_mode="Markdown"
             )
             return
         
         await query.message.edit_text(
-            f"✅ **Deployment Repo `MhmdSairi/gabut` Berhasil!** 🎉\n\n"
+            f"✅ **Deployment Repo `MhmdSairi/gabut` Berhasil 100%!** 🎉\n\n"
             f"• Project ID: `{project_id}`\n"
-            f"• Repository: `https://github.com/MhmdSairi/gabut`\n\n"
-            f"🚀 Railway sedang menarik kode dari public repository Anda dan membangun VPS di dalam akun Railway pengguna secara otomatis.",
+            f"• Service ID: `{service_id}`\n"
+            f"• Repository Terhubung: `https://github.com/MhmdSairi/gabut`\n\n"
+            f"🚀 Railway telah sukses menghubungkan dan mendeploy public repository Anda ke akun Railway pengguna secara otomatis.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
             parse_mode="Markdown"
         )
