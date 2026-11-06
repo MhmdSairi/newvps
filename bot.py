@@ -216,7 +216,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_real_railway_deployment(status_msg, user_id):
-    """Membuat proyek, mengatur rootDirectory, memicu deploy, menampilkan animasi loading kotak-kotak, dan mengambil log SSH."""
+    """Membuat proyek, mengatur rootDirectory, memicu deploy, menampilkan animasi loading kotak-kotak, dan mengambil log secara agresif."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -293,7 +293,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
         }
         requests.post(url, json=deploy_query, headers=headers, timeout=30)
 
-        # 4. Animasi Loading Kotak-Kotak & Menunggu Log SSH (Total waktu ~3 menit 40 detik / 22 iterasi x 10 detik)
+        # 4. Animasi Loading Kotak-Kotak & Pencarian Log Agresif (Batas waktu 2 menit / 24 iterasi x 5 detik)
         loaders = [
             "📦 `[■□□□□□□□□□]` 10%",
             "📦 `[■■□□□□□□□□]` 20%",
@@ -309,8 +309,20 @@ async def execute_real_railway_deployment(status_msg, user_id):
 
         ssh_details = None
         
-        # Query untuk mengambil log runtime service Railway
-        log_query = {
+        # Query Log Deployment (Build)
+        deployment_log_query = {
+            "query": """
+            query DeploymentLogs($environmentId: String!,$serviceId: String!) {
+              deploymentLogs(environmentId: $environmentId, serviceId:$serviceId) {
+                message
+              }
+            }
+            """,
+            "variables": {"environmentId": env_id, "serviceId": service_id}
+        }
+
+        # Query Log Service (Runtime)
+        service_log_query = {
             "query": """
             query ServiceLogs($environmentId: String!,$serviceId: String!) {
               serviceLogs(environmentId: $environmentId, serviceId:$serviceId) {
@@ -321,64 +333,76 @@ async def execute_real_railway_deployment(status_msg, user_id):
             "variables": {"environmentId": env_id, "serviceId": service_id}
         }
 
-        for i in range(22):  # 22 iterasi x 10 detik = 220 detik (~3 menit 40 detik)
+        for i in range(24):  # 24 iterasi x 5 detik = 120 detik (Tepat 2 Menit)
             loader_anim = loaders[i % len(loaders)]
-            elapsed_time = (i + 1) * 10
+            elapsed_time = (i + 1) * 5
             
             try:
                 await status_msg.edit_text(
                     f"🚀 **Penginstalan Railway Ubuntu 24.04 VPS sedang berjalan mohon ditunggu 2-3 menit**\n\n"
                     f"{loader_anim}\n"
-                    f"⏱️ Waktu berlalu: `{elapsed_time} detik` (~3 menit 40 detik)\n"
+                    f"⏱️ Waktu berlalu: `{elapsed_time} detik` (Batas waktu: 2 Menit)\n"
                     f"📂 Proyek: `{project_name}`\n\n"
-                    f"_Bot sedang membaca log runtime secara real-time hingga detail SSH muncul..._",
+                    f"_Bot agresif memindai log deployment & service secara real-time..._",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
 
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
-            # Ambil log runtime terbaru dari Railway
-            log_res = requests.post(url, json=log_query, headers=headers, timeout=30).json()
-            logs = log_res.get("data", {}).get("serviceLogs", [])
-            full_log_text = "\n".join([item.get("message", "") for item in logs])
+            # Cek log deployment dan log service secara bersamaan secara agresif
+            combined_logs = ""
+            try:
+                # 1. Ambil Deployment Logs
+                d_res = requests.post(url, json=deployment_log_query, headers=headers, timeout=15).json()
+                d_logs = d_res.get("data", {}).get("deploymentLogs", [])
+                if d_logs:
+                    combined_logs += "\n".join([item.get("message", "") for item in d_logs])
+
+                # 2. Ambil Service Logs
+                s_res = requests.post(url, json=service_log_query, headers=headers, timeout=15).json()
+                s_logs = s_res.get("data", {}).get("serviceLogs", [])
+                if s_logs:
+                    combined_logs += "\n" + "\n".join([item.get("message", "") for item in s_logs])
+            except Exception:
+                pass
             
-            # Cek apakah string penanda SSH Access Details atau SSH Command sudah muncul di log[span_0](start_span)[span_0](end_span)
-            if "SSH ACCESS DETAILS" in full_log_text or "SSH Command:" in full_log_text or "Password" in full_log_text:
-                ssh_details = full_log_text
+            # Cek apakah string penanda SSH Access Details atau SSH Command sudah muncul[span_2](start_span)[span_2](end_span)
+            if "SSH ACCESS DETAILS" in combined_logs or "SSH Command:" in combined_logs or "Password" in combined_logs:
+                ssh_details = combined_logs
                 break
 
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
         
         if ssh_details:
-            # Format pembersihan teks log agar langsung menampilkan bagian SSH ACCESS DETAILS sampai SSH Command[span_1](start_span)[span_1](end_span)
+            # Format pembersihan teks log agar menampilkan bagian SSH ACCESS DETAILS sampai SSH Command dengan rapi[span_3](start_span)[span_3](end_span)
             lines = ssh_details.split("\n")
             filtered_lines = []
             capture = False
             for line in lines:
-                if "SSH ACCESS DETAILS" in line:
+                if "SSH ACCESS DETAILS" in line or "Host" in line:
                     capture = True
                 if capture:
                     filtered_lines.append(line)
-                    if "ssh root@" in line or "p " in line:
-                        # Ambil beberapa baris sampai perintah SSH selesai
+                    if "ssh root@" in line or "-p " in line:
                         pass
             
-            clean_log = "\n".join(filtered_lines[:15]) if filtered_lines else ssh_details[-500:]
+            # Ambil maksimal 15 baris teratas yang relevan dengan detail SSH
+            clean_log = "\n".join(filtered_lines[:15]) if filtered_lines else ssh_details[-600:]
             
             await status_msg.edit_text(
-                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span)\n\n"
+                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)\n\n"
                 f"📂 **Proyek:** `{project_name}`\n\n"
-                f"🔑 **DATA AKSES SSH & COMMAND ANDA:**[span_4](start_span)[span_4](end_span)\n"
+                f"🔑 **DATA AKSES SSH & COMMAND ANDA:**[span_6](start_span)[span_6](end_span)\n"
                 f"```text\n{clean_log}\n```",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
         else:
             await status_msg.edit_text(
-                f"⚠️ **Waktu Tunggu Selesai (3 Menit 40 Detik)**\n\n"
-                f"Proyek `{project_name}` telah selesai dideploy. Silakan cek detail akses SSH lengkapnya langsung di Dashboard Railway Anda.",
+                f"⚠️ **Batas Waktu 2 Menit Tercapai**\n\n"
+                f"Proyek `{project_name}` sedang berjalan. Log SSH tertangkap terlambat atau Anda dapat langsung melihat detail akses SSH lengkap melalui Dashboard Railway Anda.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -467,7 +491,7 @@ async def delete_railway_project(query, user_id, proj_id):
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Final Perfect Version)...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Aggressive Log Reader)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
