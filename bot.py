@@ -189,13 +189,11 @@ async def execute_railway_cli_deployment(status_msg, user_id):
     deploy_dir = f"vps_deploy_{user_id}"
 
     try:
-        # Bersihkan direktori lama jika ada
         if os.path.exists(repo_dir):
             os.system(f"rm -rf {repo_dir}")
         if os.path.exists(deploy_dir):
             os.system(f"rm -rf {deploy_dir}")
 
-        # 1. Clone repository newvps dengan sparse-checkout khusus folder vps2-main
         await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (2/4)**\n🔄 Mengambil folder `vps2-main` dari repository `newvps`...", parse_mode="Markdown")
         
         os.makedirs(repo_dir)
@@ -205,6 +203,8 @@ async def execute_railway_cli_deployment(status_msg, user_id):
         await asyncio.create_subprocess_shell("git remote add origin https://github.com/MhmdSairi/newvps.git", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await asyncio.create_subprocess_shell("git config core.sparseCheckout true", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         
+        # Memastikan direktori .git/info ada sebelum menulis file sparse-checkout
+        os.makedirs(".git/info", exist_ok=True)
         with open(".git/info/sparse-checkout", "w") as f:
             f.write("vps2-main/\n")
             
@@ -216,7 +216,6 @@ async def execute_railway_cli_deployment(status_msg, user_id):
         await pull_proc.communicate()
         
         if not os.path.exists("vps2-main"):
-            # Coba branch master jika main tidak ada
             await asyncio.create_subprocess_shell("git pull origin master", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             
         if not os.path.exists("vps2-main"):
@@ -224,17 +223,14 @@ async def execute_railway_cli_deployment(status_msg, user_id):
             os.system(f"rm -rf {repo_dir}")
             raise Exception("Folder `vps2-main` tidak ditemukan di dalam repository `newvps`.")
 
-        # Pindahkan isi folder vps2-main ke folder deploy bersih
         os.chdir("..")
         os.rename(os.path.join(repo_dir, "vps2-main"), deploy_dir)
         os.system(f"rm -rf {repo_dir}")
 
         await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (3/4)**\n🔄 Inisialisasi & menghubungkan proyek ke Railway...", parse_mode="Markdown")
 
-        # Masuk ke dalam folder deploy
         os.chdir(deploy_dir)
 
-        # 2. Inisialisasi Project dan Link menggunakan Token User secara non-interaktif
         init_proc = await asyncio.create_subprocess_shell(
             f"export RAILWAY_TOKEN={railway_token} && railway init --yes",
             stdout=asyncio.subprocess.PIPE,
@@ -244,7 +240,6 @@ async def execute_railway_cli_deployment(status_msg, user_id):
 
         await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (4/4)**\n🔄 Mengunggah dan mendeploy file ke server Railway...", parse_mode="Markdown")
 
-        # 3. Deploy file menggunakan railway up
         deploy_proc = await asyncio.create_subprocess_shell(
             f"export RAILWAY_TOKEN={railway_token} && railway up --detach --yes",
             stdout=asyncio.subprocess.PIPE,
@@ -252,7 +247,6 @@ async def execute_railway_cli_deployment(status_msg, user_id):
         )
         stdout, stderr = await deploy_proc.communicate()
         
-        # Keluar kembali ke folder utama bot dan bersihkan direktori temp
         os.chdir("..")
         os.system(f"rm -rf {deploy_dir}")
 
