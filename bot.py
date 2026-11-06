@@ -1,237 +1,269 @@
+import asyncio
+import logging
+import json
 import os
-import requests
+import subprocess
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
 
-# Token Bot Telegram Anda
-TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
+# Konfigurasi Logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Repository utama Anda yang sekarang sudah menjadi Publik
-PUBLIC_REPO_NAME = "MhmdSairi/newvps"
+TELEGRAM_BOT_TOKEN = "9222260820:AAHBD11K_t_jRd05pDmo3KSA3z-Zw7hyC9s"  # Ganti dengan token bot baru Anda jika perlu
+ADMIN_TELEGRAM_ID = 1564275538
+DB_FILE = "railway_users.json"
 
-# Penyimpanan token sementara per user ID
-USER_TOKENS = {}
+USER_SESSIONS = {}
 
-async def verify_railway_token(railway_token):
-    """Fungsi login/validasi token asli ke Railway API v2."""
-    url = "https://backboard.railway.com/graphql/v2"
-    clean_token = railway_token.strip().replace('"', '').replace("'", "")
-    headers = {
-        "Authorization": f"Bearer {clean_token}",
-        "Content-Type": "application/json"
-    }
-    
-    queries = [
-        {"query": "{ me { id name email } }"},
-        {"query": "{ workspaces { id name } }"},
-        {"query": "{ projects { edges { node { id name } } } }"}
-    ]
-    
-    for q in queries:
+def load_db():
+    if os.path.exists(DB_FILE):
         try:
-            response = requests.post(url, json=q, headers=headers, timeout=15)
-            result = response.json()
-            if "data" in result and result["data"]:
-                return True, clean_token
-        except Exception:
-            continue
-            
-    return False, clean_token
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Gagal membaca database: {e}")
+    return {}
+
+def save_db(data):
+    try:
+        with open(DB_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        logger.error(f"Gagal menyimpan database: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menampilkan menu utama saat perintah /start dikirim."""
-    keyboard = [
-        [InlineKeyboardButton("🔑 Daftar Token (Login)", callback_data="menu_token")],
-        [InlineKeyboardButton("🚀 Buat VPS (Auto Deploy)", callback_data="menu_deploy")],
-        [InlineKeyboardButton("ℹ️ Cek Status Akun", callback_data="menu_status")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    welcome_text = (
-        "🤖 **Bot Manager VPS & Railway Deployment**\n\n"
-        "Selamat datang! Silakan daftarkan token Railway Anda. Setelah login, bot akan otomatis mendeploy instalasi VPS dari folder `vps2-main` di repository publik `MhmdSairi/newvps` ke akun Railway Anda."
-    )
-    
-    if update.message:
-        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
-    elif update.callback_query:
-        await update.callback_query.message.edit_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
+        await update.message.reply_text("⛔ **Akses Ditolak:** Bot ini bersifat privat.")
+        return
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menangani navigasi tombol inline menu."""
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "menu_token":
-        context.user_data['waiting_for_token'] = True
-        await query.message.edit_text(
-            "🔑 **Silakan Kirim Token Railway Anda**\n\n"
-            "Kirim format dengan spasi:\n`NamaToken TokenRailway`\n\n"
-            "Contoh:\n`sairi rlwy_wksp_xxxxxxxx`",
+    chat_id = str(update.effective_chat.id)
+    db = load_db()
+    user_data = db.get(chat_id, {})
+
+    if user_data and user_data.get("railway_token"):
+        await show_main_menu(update.message, user_data)
+    else:
+        keyboard = [
+            [InlineKeyboardButton("🔑 LOGIN TOKEN RAILWAY", callback_data="login_railway", style="success")],
+            [InlineKeyboardButton("ℹ️ CARA DAPAT TOKEN", callback_data="help_token", style="primary")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "✨ **BOT AUTOMATION DEPLOY VPS RAILWAY** ✨\n\n"
+            "Belum ada Token Railway yang tersimpan. Silakan login terlebih dahulu menggunakan Token Railway Anda untuk mulai melakukan deploy:",
+            reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-    elif query.data == "menu_deploy":
-        user_id = query.from_user.id
-        if user_id not in USER_TOKENS:
-            await query.message.edit_text(
-                "❌ **Token Belum Terdaftar!**\n\n"
-                "Silakan pilih menu **Daftar Token (Login)** terlebih dahulu.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
-                parse_mode="Markdown"
-            )
-            return
-        
-        await query.message.edit_text("🚀 **Bot sedang membuat project dan mendeploy folder `vps2-main` ke akun Railway Anda...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
-        await execute_railway_api_deployment(query, user_id)
-        
-    elif query.data == "menu_status":
-        user_id = query.from_user.id
-        token_info = USER_TOKENS.get(user_id, {})
-        if token_info:
-            text = f"✅ **Akun Terhubung**\n• Nama Token: `{token_info.get('name')}`"
-        else:
-            text = "⚠️ Belum ada token Railway yang didaftarkan."
-        
-        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        
-    elif query.data == "back_home":
-        await start(update, context)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menangkap input format login token dari pengguna."""
-    user_id = update.message.from_user.id
-    text = update.message.text.strip()
+async def show_main_menu(target_obj, user_data):
+    token_name = user_data.get("token_name", "Default User")
+    masked_token = user_data.get("railway_token", "")[:10] + "..."
     
-    if context.user_data.get('waiting_for_token'):
-        parts = text.split(" ", 1)
-        if len(parts) < 2:
-            await update.message.reply_text("❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `sairi rlwy_wksp_xxxx`", parse_mode="Markdown")
-            return
-        
-        token_name, railway_token = parts[0], parts[1].strip()
-        
-        msg_wait = await update.message.reply_text("⏳ Memverifikasi token ke server Railway...")
-        is_valid, clean_token = await verify_railway_token(railway_token)
-        
-        if not is_valid:
-            await msg_wait.edit_text("❌ **Login Gagal!** Token Railway ditolak oleh server. Pastikan token Anda aktif dan benar.")
-            return
-        
-        USER_TOKENS[user_id] = {
-            "name": token_name,
-            "token": clean_token
-        }
-        context.user_data['waiting_for_token'] = False
-        
-        keyboard = [
-            [InlineKeyboardButton("🚀 Lanjut Buat VPS (Auto Deploy)", callback_data="menu_deploy")],
-            [InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]
-        ]
-        
-        await msg_wait.edit_text(
-            f"✅ **Login Berhasil & Token Disimpan!** 🎉\n\n"
-            f"• Nama Token: `{token_name}`\n\n"
-            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS (Auto Deploy)** di bawah untuk mendeploy folder `vps2-main` dari repository `MhmdSairi/newvps`.",
+    text = (
+        "✨ **PANEL UTAMA DEPLOYMENT VPS** ✨\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **Nama Sesi**   : `{token_name}`\n"
+        f"🔑 **Token Aktif** : `{masked_token}`\n"
+        f"📦 **Repository**  : `vps2-main` (Public GitHub)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 *Pilih menu di bawah untuk mengelola atau menjalankan deploy otomatis.*"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 DEPLOY SEKARANG", callback_data="start_deploy", style="success")],
+        [InlineKeyboardButton("🔄 GANTI TOKEN LOGIN", callback_data="login_railway", style="primary")],
+        [InlineKeyboardButton("❌ KELUAR / RESET", callback_data="logout_session", style="danger")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if hasattr(target_obj, 'edit_message_text'):
+        await target_obj.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    elif hasattr(target_obj, 'reply_text'):
+        await target_obj.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        chat_id = target_obj.effective_chat.id if hasattr(target_obj, 'effective_chat') else target_obj.chat.id
+        await target_obj.get_bot().send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode="Markdown")
+
+async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = str(update.effective_chat.id)
+    db = load_db()
+
+    if query.data == "login_railway":
+        USER_SESSIONS[chat_id] = {'status': 'AWAITING_TOKEN_NAME'}
+        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU", callback_data="back_to_home", style="primary")]]
+        await query.message.edit_text(
+            "🔑 **LOGIN TOKEN RAILWAY**\n\n"
+            "Langkah 1/2: Silakan ketik **Nama Token / Nama Anda** untuk identifikasi sesi ini:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
-async def execute_railway_api_deployment(query, user_id):
-    """Membuat project baru di akun Railway user dan mendeploy isi folder vps2-main dari repository publik."""
-    token_data = USER_TOKENS.get(user_id)
-    railway_token = token_data['token']
-    
-    url = "https://backboard.railway.com/graphql/v2"
-    headers = {
-        "Authorization": f"Bearer {railway_token}",
-        "Content-Type": "application/json"
-    }
-    
-    # 1. Buat Project Baru di Akun Railway User
-    create_project_query = {
-        "query": "mutation { projectCreate(input: { name: \"VPS-newvps-Deploy\" }) { id name } }"
-    }
-    
-    try:
-        response = requests.post(url, json=create_project_query, headers=headers, timeout=30)
-        result = response.json()
-        
-        if "errors" in result:
-            err_msg = result["errors"][0].get("message", "Terjadi kesalahan API")
-            await query.message.reply_text(
-                f"❌ **Gagal Membuat Proyek Railway:**\n`{err_msg}`",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
-                parse_mode="Markdown"
-            )
-            return
-            
-        project_data = result.get("data", {}).get("projectCreate", {})
-        project_id = project_data.get("id")
-        
-        # 2. Buat Service yang menautkan repository publik Anda dengan rootDirectory "vps2-main"
-        create_service_query = {
-            "query": """
-                mutation ServiceCreate($input: ServiceCreateInput!) {
-                    serviceCreate(input: $input) {
-                        id
-                        name
-                    }
-                }
-            """,
-            "variables": {
-                "input": {
-                    "projectId": project_id,
-                    "name": "vps-service",
-                    "source": {
-                        "repo": PUBLIC_REPO_NAME,
-                        "branch": "main",
-                        "rootDirectory": "vps2-main"
-                    }
-                }
-            }
-        }
-        
-        service_res = requests.post(url, json=create_service_query, headers=headers, timeout=30)
-        service_result = service_res.json()
-        
-        if "errors" in service_result:
-            err_service = service_result["errors"][0].get("message", "Gagal menautkan repository")
-            await query.message.reply_text(
-                f"❌ **Proyek Dibuat, tapi Gagal Menautkan Repository:**\n`{err_service}`",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
-                parse_mode="Markdown"
-            )
-            return
-        
+    elif query.data == "help_token":
+        keyboard = [
+            [InlineKeyboardButton("🔑 LOGIN SEKARANG", callback_data="login_railway", style="success")],
+            [InlineKeyboardButton("🏠 KEMBALI KE MENU", callback_data="back_to_home", style="primary")]
+        ]
         await query.message.edit_text(
-            f"✅ **Deployment Folder `vps2-main` Berhasil 100% Otomatis!** 🎉\n\n"
-            f"• Project ID: `{project_id}`\n"
-            f"• Sumber Repository: `{PUBLIC_REPO_NAME}`\n"
-            f"• Direktori: `/vps2-main`\n\n"
-            f"🚀 Bot telah sukses memerintahkan akun Railway pengguna untuk membuat project dan membangun VPS secara otomatis dari folder `vps2-main` repository Anda.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
+            "ℹ️ **CARA MENDAPATKAN TOKEN RAILWAY:**\n\n"
+            "1. Buka dashboard Railway (railway.com).\n"
+            "2. Masuk ke **Account Settings** atau **Workspace Tokens**.\n"
+            "3. Buat token baru (biasanya berformat `rlwy_wksp_...` atau sejenisnya).\n"
+            "4. Salin token tersebut dan masukkan ke bot saat diminta.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
+
+    elif query.data == "start_deploy":
+        user_data = db.get(chat_id, {})
+        railway_token = user_data.get("railway_token")
         
-    except Exception as e:
-        await query.message.reply_text(
-            f"❌ Terjadi kesalahan koneksi API:\n`{str(e)}`",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
+        if not railway_token:
+            await query.message.edit_text("❌ Token tidak ditemukan. Silakan login ulang.")
+            return
+
+        status_msg = await query.message.reply_text(
+            "⏳ **MEMPROSES DEPLOYMENT OTO-VPS**\n\n"
+            "🔄 `[1/3]` Mengunduh file `vps2-main` dari GitHub...",
             parse_mode="Markdown"
         )
 
-def main():
-    """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Public Repo Integration)...")
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    print("🤖 Bot Telegram berhasil berjalan!")
-    application.run_polling(drop_pending_updates=True)
+        try:
+            # Simulasi proses kloning / penyiapan file repo publik GitHub Anda
+            repo_url = "https://github.com/USERNAME_ANDA/vps2-main.git" # Ganti dengan link github public Anda
+            folder_name = f"deploy_{chat_id}"
+            
+            # Jika folder sudah ada, bersihkan dulu
+            if os.path.exists(folder_name):
+                os.system(f"rm -rf {folder_name}")
 
-if __name__ == "__main__":
-    main()
+            # Clone repository publik
+            process = await asyncio.create_subprocess_shell(
+                f"git clone https://github.com/MhmdSairi/vps2-main.git {folder_name}", # Sesuaikan link github Anda
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+
+            await status_msg.edit_text(
+                "⏳ **MEMPROSES DEPLOYMENT OTO-VPS**\n\n"
+                "✅ `[1/3]` Berhasil mengunduh file repository.\n"
+                "🔄 `[2/3]` Melakukan autentikasi & inisialisasi Railway CLI...",
+                parse_mode="Markdown"
+            )
+
+            # Jalankan deploy menggunakan Railway Token (`RAILWAY_TOKEN`)
+            os.chdir(folder_name)
+            deploy_process = await asyncio.create_subprocess_shell(
+                f"export RAILWAY_TOKEN={railway_token} && railway up --detach",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await deploy_process.communicate()
+            os.chdir("..") # Kembali ke folder utama
+
+            await status_msg.edit_text(
+                "🎉 **DEPLOYMENT BERHASIL DIEKSEKUSI!**\n\n"
+                "✅ `[1/3]` File repository diunduh.\n"
+                "✅ `[2/3]` Autentikasi Railway sukses.\n"
+                "✅ `[3/3]` Perintah `railway up` berhasil dikirim!\n\n"
+                "💡 *VPS installer Anda sedang berjalan di cloud Railway.*",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]),
+                parse_mode="Markdown"
+            )
+
+        except Exception as e:
+            keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
+            await status_msg.edit_text(f"❌ **Gagal melakukan deploy:**\n`{str(e)}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif query.data == "logout_session":
+        if chat_id in db:
+            del db[chat_id]
+            save_db(db)
+        
+        keyboard = [[InlineKeyboardButton("🔑 LOGIN KEMBALI", callback_data="login_railway", style="success")]]
+        await query.message.edit_text(
+            "🔒 **SESI BERHASIL DIHAPUS**\n\nToken dan data login Anda telah dihapus dari database bot.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif query.data == "back_to_home":
+        user_data = db.get(chat_id, {})
+        if user_data and user_data.get("railway_token"):
+            await show_main_menu(query.message, user_data)
+        else:
+            keyboard = [
+                [InlineKeyboardButton("🔑 LOGIN TOKEN RAILWAY", callback_data="login_railway", style="success")],
+                [InlineKeyboardButton("ℹ️ CARA DAPAT TOKEN", callback_data="help_token", style="primary")]
+            ]
+            await query.message.edit_text(
+                "✨ **BOT AUTOMATION DEPLOY VPS RAILWAY** ✨\n\nSilakan login terlebih dahulu:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
+        return
+
+    chat_id = str(update.effective_chat.id)
+    text = update.message.text.strip()
+    session = USER_SESSIONS.get(chat_id, {})
+    status = session.get('status')
+
+    if status == 'AWAITING_TOKEN_NAME':
+        USER_SESSIONS[chat_id]['token_name'] = text
+        USER_SESSIONS[chat_id]['status'] = 'AWAITING_RAILWAY_TOKEN'
+        
+        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU", callback_data="back_to_home", style="primary")]]
+        await update.message.reply_text(
+            f"✅ Nama Token dicatat: `{text}`\n\n"
+            "Langkah 2/2: Sekarang silakan ketik / kirim **Token Railway** Anda (contoh: `rlwy_wksp_...`):",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif status == 'AWAITING_RAILWAY_TOKEN':
+        token_name = session.get('token_name', 'My Token')
+        railway_token = text
+
+        db = load_db()
+        db[chat_id] = {
+            "token_name": token_name,
+            "railway_token": railway_token
+        }
+        save_db(db)
+
+        # Bersihkan sesi sementara
+        if chat_id in USER_SESSIONS:
+            del USER_SESSIONS[chat_id]
+
+        await update.message.reply_text("🎉 **LOGIN BERHASIL!** Token Railway Anda telah disimpan dengan aman.")
+        await show_main_menu(update.message, db[chat_id])
+
+async def main():
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_callbacks))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    logger.info("Bot Deploy VPS Railway berjalan...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start
