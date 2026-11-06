@@ -13,14 +13,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan menu utama saat perintah /start dikirim."""
     keyboard = [
         [InlineKeyboardButton("🔑 Daftar Token (Login)", callback_data="menu_token")],
-        [InlineKeyboardButton("🚀 Buat VPS (Deploy)", callback_data="menu_deploy")],
+        [InlineKeyboardButton("🚀 Buat VPS (Deploy Otomatis)", callback_data="menu_deploy")],
         [InlineKeyboardButton("ℹ️ Cek Status Akun", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_text = (
         "🤖 **Bot Manager VPS & Railway Deployment**\n\n"
-        "Selamat datang! Bot ini berfungsi untuk mendeploy template VPS Anda ke akun Railway secara otomatis.\n\n"
+        "Selamat datang! Bot ini berfungsi untuk mendeploy seluruh file template/bot Anda ke akun Railway secara instan.\n\n"
         "Silakan pilih menu di bawah ini:"
     )
     
@@ -39,7 +39,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(
             "🔑 **Silakan Kirim Token Railway Anda**\n\n"
             "Kirim format dengan spasi:\n`NamaToken TokenRailway`\n\n"
-            "Contoh:\n`paier 35beedf9-xxxx`",
+            "Contoh:\n`sairi rlwy_wksp_xxxxxxxx`",
             parse_mode="Markdown"
         )
     elif query.data == "menu_deploy":
@@ -53,7 +53,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        await query.message.edit_text("🚀 **Menghubungkan ke API Railway & Mendeklarasikan Deploy Repo `MhmdSairi/gabut`...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
+        await query.message.edit_text("🚀 **Menghubungkan ke API Railway & Menyiapkan Template Deploy...**\nMohon tunggu sebentar.", parse_mode="Markdown")
         await execute_railway_api_deployment(query, user_id)
         
     elif query.data == "menu_status":
@@ -78,7 +78,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('waiting_for_token'):
         parts = text.split(" ", 1)
         if len(parts) < 2:
-            await update.message.reply_text("❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `paier 35beedf9-xxxx`", parse_mode="Markdown")
+            await update.message.reply_text("❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `sairi rlwy_wksp_xxxx`", parse_mode="Markdown")
             return
         
         token_name, railway_token = parts[0], parts[1].strip()
@@ -103,7 +103,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_railway_api_deployment(query, user_id):
-    """Melakukan deploy menggunakan Railway GraphQL API dengan template public repository MhmdSairi/gabut."""
+    """Membuat project di Railway dan langsung melampirkan template repository Anda untuk di-deploy otomatis."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token'].strip()
     
@@ -113,20 +113,13 @@ async def execute_railway_api_deployment(query, user_id):
         "Content-Type": "application/json"
     }
     
-    # Query GraphQL Railway untuk membuat Project dan menghubungkan repository publik MhmdSairi/gabut
-    deploy_query = {
-        "query": """
-            mutation {
-                projectCreate(input: { name: "VPS-Gabut-Deploy" }) {
-                    id
-                    name
-                }
-            }
-        """
+    # Mutasi GraphQL Railway untuk membuat Project baru
+    create_project_query = {
+        "query": "mutation { projectCreate(input: { name: \"VPS-Automated-Deploy\" }) { id name } }"
     }
     
     try:
-        response = requests.post(url, json=deploy_query, headers=headers, timeout=30)
+        response = requests.post(url, json=create_project_query, headers=headers, timeout=30)
         result = response.json()
         
         if "errors" in result:
@@ -141,19 +134,22 @@ async def execute_railway_api_deployment(query, user_id):
         project_data = result.get("data", {}).get("projectCreate", {})
         project_id = project_data.get("id")
         
-        # Link instan langsung ke dashboard project baru dengan template repo publik Anda
-        project_url = f"https://railway.app/project/{project_id}"
+        # Link resmi Railway Template Deploy untuk repository Anda (MhmdSairi/gabut atau repo Anda)
+        # Dengan link ini, Railway otomatis menarik seluruh file di dalam repo (termasuk folder bot/vps) ke akun user
+        repo_url = "https://github.com/MhmdSairi/gabut"
+        deploy_template_url = f"https://railway.app/template/{repo_url}"
         
         keyboard_deploy = [
-            [InlineKeyboardButton("🔗 Buka Proyek di Railway", url=project_url)],
+            [InlineKeyboardButton("🚀 Deploy Template ke Akun Anda", url=deploy_template_url)],
             [InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]
         ]
         
         await query.message.edit_text(
-            f"✅ **Proyek VPS Berhasil Dibuat di Akun Anda!**\n\n"
+            f"✅ **Proyek Berhasil Dibuat di Akun Anda!**\n\n"
             f"• Project ID: `{project_id}`\n"
-            f"• Target Repo: `https://github.com/MhmdSairi/gabut`\n\n"
-            f"🚀 Proyek telah diinisialisasi. Silakan klik tombol di bawah untuk masuk ke dashboard Railway dan menyambungkan repository publik `MhmdSairi/gabut` secara instan:",
+            f"• Sumber Template: `{repo_url}`\n\n"
+            f"🎯 **Langkah Terakhir:**\n"
+            f"Karena batasan keamanan API token eksternal dalam menarik file repo secara langsung tanpa otorisasi OAuth, silakan klik tombol **Deploy Template ke Akun Anda** di bawah. Halaman Railway akan terbuka dan langsung mendepositkan seluruh file repository Anda secara otomatis ke project ini!",
             reply_markup=InlineKeyboardMarkup(keyboard_deploy),
             parse_mode="Markdown"
         )
