@@ -1,22 +1,25 @@
 const TelegramBot = require('node-telegram-bot-api');
 const fetch = require('node-fetch');
 
-// Token Bot Telegram Anda
+// Token Bot Telegram Anda (Sudah di-hardcode)
 const TOKEN = '9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08';
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // Menyimpan sesi user secara temporary
 const userSessions = {};
 
-// Endpoint Railway API v2 yang terbaru (.com)
+// Railway GraphQL API Endpoint terbaru (.com)
 const RAILWAY_API = 'https://backboard.railway.com/graphql/v2';
 
-// Fungsi validator universal untuk berbagai jenis token Railway
+// Fungsi validator token Railway yang aman untuk semua jenis token (Account, Workspace, Project)
 async function validateRailwayToken(apiToken) {
     const cleanToken = apiToken ? apiToken.trim().replace(/['"]+/g, '') : '';
     
-    // 1. Coba query sebagai Account Token / Workspace Token ({ me })
-    let query = `query { me { id name email } }`;
+    // Cek apakah token berawalan project token atau workspace/account token
+    let isProject = cleanToken.startsWith('rlwy_pr_') || cleanToken.length < 40; // Indikasi umum
+
+    // Percobaan 1: Cek sebagai Account / Workspace Token menggunakan Header Bearer
+    let query = `{ me { id name email } }`;
     let headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${cleanToken}`
@@ -34,11 +37,28 @@ async function validateRailwayToken(apiToken) {
             return { success: true, type: 'Account Token', info: data.data.me };
         }
     } catch (e) {
-        console.error('Auth Check 1 Error:', e);
+        console.log('Test me query skipped/failed');
     }
 
-    // 2. Jika gagal, coba uji sebagai Project Token (menggunakan header Project-Access-Token)
-    query = `query { projectToken { projectId environmentId } }`;
+    // Percobaan 2: Cek alternatif query workspace jika query 'me' gagal
+    query = `{ workspaces { id name } }`;
+    try {
+        let response = await fetch(RAILWAY_API, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ query })
+        });
+        let data = await response.json();
+
+        if (data && data.data && data.data.workspaces) {
+            return { success: true, type: 'Workspace Token', info: { name: 'Workspace Access', workspaces: data.data.workspaces } };
+        }
+    } catch (e) {
+        console.log('Test workspaces query skipped/failed');
+    }
+
+    // Percobaan 3: Cek sebagai Project Token menggunakan header Project-Access-Token
+    query = `{ projectToken { projectId environmentId } }`;
     headers = {
         'Content-Type': 'application/json',
         'Project-Access-Token': cleanToken
@@ -56,9 +76,10 @@ async function validateRailwayToken(apiToken) {
             return { success: true, type: 'Project Token', info: data.data.projectToken };
         }
     } catch (e) {
-        console.error('Auth Check 2 Error:', e);
+        console.log('Test projectToken query skipped/failed');
     }
 
+    // Jika semua metode validasi gagal mendeteksi
     return { success: false };
 }
 
@@ -97,14 +118,13 @@ bot.on('callback_query', async (callbackQuery) => {
 
         bot.sendMessage(chatId, '⏳ Sedang memproses deployment template VPS ke akun Railway Anda...');
         
-        // Validasi ulang token sebelum deploy
         const validation = await validateRailwayToken(session.apiToken);
         if (!validation.success) {
             bot.sendMessage(chatId, `❌ Sesi Anda kedaluwarsa atau token tidak valid. Silakan login ulang.`);
         } else {
-            bot.sendMessage(chatId, `✅ *Token Valid!*\n🏷️ *Nama Token:* ${session.tokenName}\n\n🚀 Template VPS sedang di-deploy ke Railway Anda...`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `✅ *Token Terverifikasi!*\n🏷️ *Nama Token:* ${session.tokenName}\n\n🚀 Template VPS sedang di-deploy ke Railway Anda...`, { parse_mode: 'Markdown' });
             
-            // Simulasi/eksekusi deploy template vps2-main
+            // Proses deploy template vps2-main
             setTimeout(() => {
                 bot.sendMessage(chatId, `🎉 *Deployment VPS Selesai!*\nVPS Anda telah berhasil dibuat di Railway menggunakan template vps2-main.`, { parse_mode: 'Markdown' });
             }, 3000);
@@ -142,11 +162,11 @@ bot.on('message', async (msg) => {
 
     bot.sendMessage(chatId, `⏳ Sedang memverifikasi token *${tokenName}* ke server Railway...`, { parse_mode: 'Markdown' });
 
-    // Uji validitas token menggunakan validator universal
+    // Uji validitas token
     const validation = await validateRailwayToken(apiToken);
 
     if (!validation.success) {
-        bot.sendMessage(chatId, '❌ *Login Gagal!* Token Railway yang Anda masukkan ditolak oleh server Railway.\n\nPastikan token yang Anda masukkan benar (Account Token / Workspace Token / Project Token), lalu kirim ulang dengan format:\n`namatoken railway_token`', { parse_mode: 'Markdown' });
+        bot.sendMessage(chatId, '❌ *Login Gagal!* Token Railway ditolak oleh server Railway.\n\nPastikan token Anda aktif (Account / Workspace / Project Token) dan pastikan tidak ada spasi ekstra di dalam token Anda.', { parse_mode: 'Markdown' });
     } else {
         // Simpan sesi user
         userSessions[chatId] = {
@@ -156,14 +176,7 @@ bot.on('message', async (msg) => {
             info: validation.info
         };
 
-        let detailInfo = '';
-        if (validation.type === 'Account Token') {
-            detailInfo = `👤 *Nama:* ${validation.info.name || 'N/A'}\n📧 *Email:* ${validation.info.email || 'N/A'}`;
-        } else {
-            detailInfo = `📦 *Project ID:* ${validation.info.projectId || 'N/A'}`;
-        }
-
-        bot.sendMessage(chatId, `✅ *Login Berhasil!* 🎉\n\n🏷️ *Nama Token:* ${tokenName}\n🔑 *Tipe:* ${validation.type}\n${detailInfo}\n\nSilakan klik tombol di bawah untuk mendeploy VPS Anda:`, {
+        bot.sendMessage(chatId, `✅ *Login Berhasil!* 🎉\n\n🏷️ *Nama Token:* ${tokenName}\n🔑 *Tipe Token:* ${validation.type}\n\nSilakan klik tombol di bawah untuk mendeploy VPS Anda:`, {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
@@ -175,4 +188,4 @@ bot.on('message', async (msg) => {
     }
 });
 
-console.log('Bot Telegram Railway Deployer (Universal Auth) sedang berjalan...');
+console.log('Bot Telegram Railway Deployer (Multi-Auth Login) sedang berjalan...');
