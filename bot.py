@@ -216,7 +216,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_real_railway_deployment(status_msg, user_id):
-    """Membuat proyek, mengatur rootDirectory, memicu deploy, dan memindai log setiap 1 detik selama 3 menit."""
+    """Membuat proyek, menghubungkan repo, mendeteksi deployment ID, dan membaca log deployment setiap 1 detik selama 3 menit."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -293,7 +293,39 @@ async def execute_real_railway_deployment(status_msg, user_id):
         }
         requests.post(url, json=deploy_query, headers=headers, timeout=30)
 
-        # 4. Animasi Loading & Cek Log Setiap 1 Detik selama 3 Menit (180 detik)
+        # 4. Cari Deployment ID aktif secara dinamis
+        await status_msg.edit_text("⏳ Menunggu antrean deployment aktif di server Railway...", parse_mode="Markdown")
+        
+        deployment_id = None
+        for _ in range(15):
+            await asyncio.sleep(3)
+            deploy_list_query = {
+                "query": """
+                query Deployments($input: DeploymentListInput!) {
+                  deployments(input: $input, first: 1) {
+                    edges {
+                      node {
+                        id
+                        status
+                      }
+                    }
+                  }
+                }
+                """,
+                "variables": {
+                    "input": {
+                        "projectId": project_id,
+                        "serviceId": service_id
+                    }
+                }
+            }
+            d_res = requests.post(url, json=deploy_list_query, headers=headers, timeout=15).json()
+            edges = d_res.get("data", {}).get("deployments", {}).get("edges", [])
+            if edges:
+                deployment_id = edges[0]["node"]["id"]
+                break
+
+        # 5. Animasi Loading & Cek Log Deployment Setiap 1 Detik selama 3 Menit (180 detik)
         loaders = [
             "📦 `[■□□□□□□□□□]` 10%",
             "📦 `[■■□□□□□□□□]` 20%",
@@ -309,27 +341,17 @@ async def execute_real_railway_deployment(status_msg, user_id):
 
         ssh_details = None
         
+        # Query resmi Railway untuk mengambil log berdasarkan deploymentId
         deployment_log_query = {
             "query": """
-            query DeploymentLogs($environmentId: String!,$serviceId: String!) {
-              deploymentLogs(environmentId: $environmentId, serviceId:$serviceId) {
+            query DeploymentLogs($deploymentId: String!,$limit: Int) {
+              deploymentLogs(deploymentId: $deploymentId, limit:$limit) {
                 message
               }
             }
             """,
-            "variables": {"environmentId": env_id, "serviceId": service_id}
-        }
-
-        service_log_query = {
-            "query": """
-            query ServiceLogs($environmentId: String!,$serviceId: String!) {
-              serviceLogs(environmentId: $environmentId, serviceId:$serviceId) {
-                message
-              }
-            }
-            """,
-            "variables": {"environmentId": env_id, "serviceId": service_id}
-        }
+            "variables": {"deploymentId": deployment_id, "limit": 200}
+        } if deployment_id else None
 
         # Perulangan selama 180 detik (3 Menit), dicek setiap 1 detik
         for sec in range(1, 181):
@@ -343,7 +365,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
                         f"{loader_anim}\n"
                         f"⏱️ Waktu berlalu: `{sec} detik` / `180 detik (3 Menit)`\n"
                         f"📂 Proyek: `{project_name}`\n\n"
-                        f"_Bot agresif memindai log setiap 1 detik..._",
+                        f"_Bot agresif memindai log deploy setiap 1 detik..._",
                         parse_mode="Markdown"
                     )
                 except Exception:
@@ -351,20 +373,16 @@ async def execute_real_railway_deployment(status_msg, user_id):
 
             # Cek log setiap 1 detik secara konsisten
             combined_logs = ""
-            try:
-                d_res = requests.post(url, json=deployment_log_query, headers=headers, timeout=5).json()
-                d_logs = d_res.get("data", {}).get("deploymentLogs", [])
-                if d_logs:
-                    combined_logs += "\n".join([item.get("message", "") for item in d_logs])
-
-                s_res = requests.post(url, json=service_log_query, headers=headers, timeout=5).json()
-                s_logs = s_res.get("data", {}).get("serviceLogs", [])
-                if s_logs:
-                    combined_logs += "\n" + "\n".join([item.get("message", "") for item in s_logs])
-            except Exception:
-                pass
+            if deployment_log_query and deployment_id:
+                try:
+                    d_res = requests.post(url, json=deployment_log_query, headers=headers, timeout=3).json()
+                    d_logs = d_res.get("data", {}).get("deploymentLogs", [])
+                    if d_logs:
+                        combined_logs = "\n".join([item.get("message", "") for item in d_logs])
+                except Exception:
+                    pass
             
-            # Jika teks SSH Access Details atau SSH Command ditemukan, langsung hentikan loop dan kirim data[span_0](start_span)[span_0](end_span)
+            # Jika teks SSH Access Details atau SSH Command ditemukan, langsung hentikan loop dan kirim data[span_2](start_span)[span_2](end_span)
             if "SSH ACCESS DETAILS" in combined_logs or "SSH Command:" in combined_logs or "Password" in combined_logs:
                 ssh_details = combined_logs
                 break
@@ -388,9 +406,9 @@ async def execute_real_railway_deployment(status_msg, user_id):
             clean_log = "\n".join(filtered_lines[:15]) if filtered_lines else ssh_details[-600:]
             
             await status_msg.edit_text(
-                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_1](start_span)[span_1](end_span)[span_2](start_span)[span_2](end_span)\n\n"
+                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)\n\n"
                 f"📂 **Proyek:** `{project_name}`\n\n"
-                f"🔑 **DATA AKSES SSH & COMMAND ANDA:**[span_3](start_span)[span_3](end_span)\n"
+                f"🔑 **DATA AKSES SSH & COMMAND ANDA:**[span_5](start_span)[span_5](end_span)\n"
                 f"```text\n{clean_log}\n```",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
@@ -398,7 +416,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
         else:
             await status_msg.edit_text(
                 f"⚠️ **Batas Waktu 3 Menit Tercapai**\n\n"
-                f"Proyek `{project_name}` sedang berjalan, namun log SSH belum tertangkap. Silakan cek detail akses SSH lengkap melalui Dashboard Railway Anda.",
+                f"Proyek `{project_name}` sedang berjalan, namun log SSH belum tertangkap oleh API deployment. Silakan cek detail akses SSH lengkap melalui Dashboard Railway Anda.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -487,7 +505,7 @@ async def delete_railway_project(query, user_id, proj_id):
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Every-Second Log Checker)...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Official Deployment Logs)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
