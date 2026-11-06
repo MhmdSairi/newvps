@@ -6,8 +6,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # Token Bot Telegram Anda
 TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
 
-# Repository privat Anda yang berisi file bot dan folder vps2-main
-PRIVATE_REPO_NAME = "MhmdSairi/newvps"
+# Repository utama Anda yang sekarang sudah menjadi Publik
+PUBLIC_REPO_NAME = "MhmdSairi/newvps"
 
 # Penyimpanan token sementara per user ID
 USER_TOKENS = {}
@@ -42,14 +42,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan menu utama saat perintah /start dikirim."""
     keyboard = [
         [InlineKeyboardButton("🔑 Daftar Token (Login)", callback_data="menu_token")],
-        [InlineKeyboardButton("🚀 Buat VPS (Deploy dari vps2-main)", callback_data="menu_deploy")],
+        [InlineKeyboardButton("🚀 Buat VPS (Auto Deploy)", callback_data="menu_deploy")],
         [InlineKeyboardButton("ℹ️ Cek Status Akun", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_text = (
         "🤖 **Bot Manager VPS & Railway Deployment**\n\n"
-        "Selamat datang! Silakan daftarkan token Railway Anda. Setelah login, bot akan otomatis mendeploy instalasi VPS dari folder `vps2-main` di repository privat `MhmdSairi/newvps` ke akun Railway Anda."
+        "Selamat datang! Silakan daftarkan token Railway Anda. Setelah login, bot akan otomatis mendeploy instalasi VPS dari folder `vps2-main` di repository publik `MhmdSairi/newvps` ke akun Railway Anda."
     )
     
     if update.message:
@@ -132,13 +132,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_wait.edit_text(
             f"✅ **Login Berhasil & Token Disimpan!** 🎉\n\n"
             f"• Nama Token: `{token_name}`\n\n"
-            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS (Auto Deploy)** di bawah untuk mendeploy folder `vps2-main` dari repository privat `MhmdSairi/newvps`.",
+            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS (Auto Deploy)** di bawah untuk mendeploy folder `vps2-main` dari repository `MhmdSairi/newvps`.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
 async def execute_railway_api_deployment(query, user_id):
-    """Membuat project baru di akun Railway user dan mendeploy isi folder vps2-main dari repo MhmdSairi/newvps."""
+    """Membuat project baru di akun Railway user dan mendeploy isi folder vps2-main dari repository publik."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
     
@@ -169,7 +169,7 @@ async def execute_railway_api_deployment(query, user_id):
         project_data = result.get("data", {}).get("projectCreate", {})
         project_id = project_data.get("id")
         
-        # 2. Buat Service yang sumbernya menautkan repo privat MhmdSairi/newvps dengan rootDirectory "vps2-main"
+        # 2. Buat Service yang menautkan repository publik Anda dengan rootDirectory "vps2-main"
         create_service_query = {
             "query": """
                 mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -184,7 +184,7 @@ async def execute_railway_api_deployment(query, user_id):
                     "projectId": project_id,
                     "name": "vps-service",
                     "source": {
-                        "repo": PRIVATE_REPO_NAME,
+                        "repo": PUBLIC_REPO_NAME,
                         "branch": "main",
                         "rootDirectory": "vps2-main"
                     }
@@ -196,10 +196,10 @@ async def execute_railway_api_deployment(query, user_id):
         service_result = service_res.json()
         
         if "errors" in service_result:
-            err_service = service_result["errors"][0].get("message", "Gagal menautkan repo privat")
+            err_service = service_result["errors"][0].get("message", "Gagal menautkan repository")
             await query.message.reply_text(
-                f"⚠️ **Proyek Berhasil Dibuat, tapi Penautan Repo Privat Memerlukan Izin GitHub App:**\n`{err_service}`\n\nPastikan akun Railway pengguna sudah mengintegrasikan akun GitHub mereka di pengaturan Railway agar bisa mengakses repo privat.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
+                f"❌ **Proyek Dibuat, tapi Gagal Menautkan Repository:**\n`{err_service}`",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
                 parse_mode="Markdown"
             )
             return
@@ -207,9 +207,9 @@ async def execute_railway_api_deployment(query, user_id):
         await query.message.edit_text(
             f"✅ **Deployment Folder `vps2-main` Berhasil 100% Otomatis!** 🎉\n\n"
             f"• Project ID: `{project_id}`\n"
-            f"• Sumber Repo Privat: `{PRIVATE_REPO_NAME}`\n"
+            f"• Sumber Repository: `{PUBLIC_REPO_NAME}`\n"
             f"• Direktori: `/vps2-main`\n\n"
-            f"🚀 Bot telah sukses memerintahkan akun Railway pengguna untuk membuat project dan membangun VPS secara otomatis dari folder `vps2-main` di repository privat Anda.",
+            f"🚀 Bot telah sukses memerintahkan akun Railway pengguna untuk membuat project dan membangun VPS secara otomatis dari folder `vps2-main` repository Anda.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
             parse_mode="Markdown"
         )
@@ -223,7 +223,7 @@ async def execute_railway_api_deployment(query, user_id):
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Private Repo Integration)...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Public Repo Integration)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
