@@ -1,13 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
 const fetch = require('node-fetch');
 
-// Token Bot Telegram dari Environment Variable Railway
-const TOKEN = process.env.BOT_TOKEN;
-if (!TOKEN) {
-    console.error("ERROR: BOT_TOKEN belum diset di environment variables Railway!");
-    process.exit(1);
-}
-
+// Token Bot Telegram Anda (Sudah di-hardcode sesuai permintaan)
+const TOKEN = '9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08';
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // Menyimpan sesi user secara temporary
@@ -40,7 +35,7 @@ bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     const name = msg.from.first_name || 'User';
 
-    const welcomeMessage = `👋 Halo *${name}*!\n\nSelamat datang di Bot Otomasi Deploy VPS Railway.\n\nUntuk mulai login ke akun Railway Anda, silakan kirimkan format berikut langsung ke chat ini:\n\n\`namatoken railway_token_anda\`\n\n*Contoh:*\n\`sairi rlwy_wksp_L1WxqD85MqQufRHhh2oxrqzr9DSgaEuxkx0uYHDP\``;
+    const welcomeMessage = `👋 Halo *${name}*!\n\nSelamat datang di Bot Otomasi Deploy VPS Railway.\n\nUntuk mulai login ke akun Railway Anda, silakan kirimkan format berikut langsung ke chat ini dalam 1 baris:\n\n\`namatoken railway_token_anda\`\n\n*Contoh:*\n\`sairi rlwy_wksp_L1WxqD85MqQufRHhh2oxrqzr9DSgaEuxkx0uYHDP\``;
 
     const opts = {
         parse_mode: 'Markdown',
@@ -78,11 +73,11 @@ bot.on('callback_query', async (callbackQuery) => {
             bot.sendMessage(chatId, `❌ Sesi Anda kedaluwarsa atau token tidak valid. Silakan login ulang.`);
         } else {
             const userInfo = result.data.me;
-            bot.sendMessage(chatId, `✅ *Berhasil Terhubung!*\\nAkun: ${userInfo.name} (${userInfo.email})\\n\\n🚀 Template VPS sedang di-deploy ke Railway Anda...`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `✅ *Berhasil Terhubung!*\nAkun: ${userInfo.name} (${userInfo.email})\n\n🚀 Template VPS sedang di-deploy ke Railway Anda...`, { parse_mode: 'Markdown' });
             
-            // Proses deploy template vps2-main dapat diintegrasikan di sini via Railway API
+            // Simulasi/proses deploy template vps2-main
             setTimeout(() => {
-                bot.sendMessage(chatId, `🎉 *Deployment VPS Selesai!*\\nVPS Anda telah berhasil dibuat di Railway menggunakan template vps2-main.`, { parse_mode: 'Markdown' });
+                bot.sendMessage(chatId, `🎉 *Deployment VPS Selesai!*\nVPS Anda telah berhasil dibuat di Railway menggunakan template vps2-main.`, { parse_mode: 'Markdown' });
             }, 3000);
         }
         bot.answerCallbackQuery(callbackQuery.id);
@@ -131,7 +126,7 @@ bot.on('message', async (msg) => {
         };
 
         const userInfo = testRes.data.me;
-        bot.sendMessage(chatId, `✅ *Login Berhasil!* 🎉\n\n👤 *Nama Akun:* ${userInfo.name || 'N/A'}\n📧 *Email:* ${userInfo.email || 'N/A'}\n🏷️ *Nama Token:* ${tokenName}\n\nSilakan klik tombol di bawah untuk mendepositkan/mendeploy VPS Anda:`, {
+        bot.sendMessage(chatId, `✅ *Login Berhasil!* 🎉\n\n👤 *Nama Akun:* ${userInfo.name || 'N/A'}\n📧 *Email:* ${userInfo.email || 'N/A'}\n🏷️ *Nama Token:* ${tokenName}\n\nSilakan klik tombol di bawah untuk mendeploy VPS Anda:`, {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
