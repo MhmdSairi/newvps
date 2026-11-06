@@ -10,19 +10,16 @@ TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
 USER_TOKENS = {}
 
 def fetch_railway_account_info(token: str):
-    """Mengambil detail akun valid dari Railway menggunakan GraphQL API."""
+    """Mengambil detail valid dari Railway (mendukung Account, Workspace, maupun Project Token)."""
     url = "https://backboard.railway.com/graphql/v2"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
+    
+    # Query aman untuk Workspace / Account token (mengambil daftar proyek yang bisa diakses)
     query = """
     {
-      me {
-        id
-        name
-        email
-      }
       projects {
         edges {
           node {
@@ -39,12 +36,16 @@ def fetch_railway_account_info(token: str):
             result = response.json()
             if "errors" in result:
                 return None, result["errors"][0].get("message", "Token ditolak oleh Railway")
+            
             data = result.get("data", {})
-            user_info = data.get("me", {})
             projects = [edge["node"]["name"] for edge in data.get("projects", {}).get("edges", [])]
+            
+            # Tentukan tipe/label token berdasarkan prefix-nya
+            token_type = "Workspace Token" if "rlwy_wksp_" in token else "Account / Personal Token"
+            
             return {
-                "name": user_info.get("name", "Railway User"),
-                "email": user_info.get("email", "Tidak ada email"),
+                "name": token_type,
+                "email": "Akses Workspace Aktif",
                 "projects": projects
             }, None
         else:
@@ -83,7 +84,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(
             "🔑 **Silakan Kirim Token Railway Anda**\n\n"
             "Kirim format dengan spasi:\n`NamaToken TokenRailway`\n\n"
-            "Contoh:\n`paier 35beedf9-xxxx`",
+            "Contoh:\n`paier rlwy_wksp_xxxx`",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -115,9 +116,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ **AKUN TERHUBUNG & VALID**\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• Nama Sesi: `{token_info.get('name')}`\n"
-                f"• Nama Akun: `{acc_name}`\n"
-                f"• Email: `{acc_email}`\n"
-                f"• Token Aktif: `{token_info.get('token')[:8]}...`\n"
+                f"• Jenis Token: `{acc_name}`\n"
+                f"• Status: `{acc_email}`\n"
+                f"• Token Aktif: `{token_info.get('token')[:10]}...`\n"
                 f"• Daftar Proyek: `{proj_str}`"
             )
         else:
@@ -139,7 +140,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) < 2:
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
             await update.message.reply_text(
-                "❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `paier 35beedf9-xxxx`",
+                "❌ Format salah! Gunakan format:\n`NamaToken TokenRailway`\nContoh: `paier rlwy_wksp_xxxx`",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -178,9 +179,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await verifying_msg.edit_text(
             f"✅ **LOGIN BERHASIL & VALID!**\n\n"
             f"• Nama Sesi: `{token_name}`\n"
-            f"• Akun Railway: `{acc_data['name']} ({acc_data['email']})`\n"
-            f"• Token: `{railway_token[:8]}****`\n\n"
-            f"Akun berhasil diverifikasi. Silakan tekan tombol **Lanjut Buat VPS** di bawah untuk mulai deploy.",
+            f"• Tipe Token: `{acc_data['name']}`\n"
+            f"• Token: `{railway_token[:10]}****`\n\n"
+            f"Token berhasil diverifikasi. Silakan tekan tombol **Lanjut Buat VPS** di bawah untuk mulai deploy.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -209,7 +210,7 @@ async def execute_railway_api_deployment(query, user_id):
             err_msg = result["errors"][0].get("message", "Terjadi kesalahan API")
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
             await query.message.edit_text(
-                f"❌ **Gagal membuat proyek Railway:**\n`{err_msg}`\n\nPastikan token Anda memiliki izin akses.",
+                f"❌ **Gagal membuat proyek Railway:**\n`{err_msg}`\n\nPastikan token Anda memiliki izin akses project.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
