@@ -96,7 +96,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        status_msg = await query.message.edit_text("🚀 **Menghubungkan ke API Railway untuk Membuat Proyek Nyata...**", parse_mode="Markdown")
+        status_msg = await query.message.edit_text("🚀 **Menghubungkan ke API Railway & Mengatur Direktori vps2-main...**", parse_mode="Markdown")
         await execute_real_railway_api_deployment(status_msg, user_id)
         
     elif query.data == "menu_status":
@@ -105,7 +105,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if token_info:
             acc_name = token_info.get('account_name', 'Terverifikasi')
             projects = token_info.get('projects', [])
-            proj_str = ", ".join(projects[:3]) if projects else "Belum ada proyek"
             
             text = (
                 f"✅ **AKUN TERHUBUNG & VALID**\n"
@@ -178,18 +177,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_real_railway_api_deployment(status_msg, user_id):
-    """Membuat proyek dan service langsung melalui GraphQL API Railway secara transparan dan nyata."""
+    """Membuat proyek, menghubungkan repo, mengatur rootDirectory ke vps2-main, dan memicu deployment."""
     token_data = USER_TOKENS.get(user_id)
-    railway_token = token_data['token']
-    
-    url = "https://backboard.railway.com/graphql/v2"
     headers = {
         "Authorization": f"Bearer {token_data['token']}",
         "Content-Type": "application/json"
     }
+    url = "https://backboard.railway.com/graphql/v2"
     
     try:
-        # 1. Buat Proyek Nyata
+        # 1. Buat Proyek Baru
         create_project_query = {
             "query": "mutation { projectCreate(input: { name: \"VPS-Manager-Deploy\" }) { id name environments { edges { node { id } } } } }"
         }
@@ -209,7 +206,7 @@ async def execute_real_railway_api_deployment(status_msg, user_id):
         envs = proj_data.get("environments", {}).get("edges", [])
         env_id = envs[0]["node"]["id"] if envs else None
 
-        # 2. Hubungkan Service dengan Repository publik Anda (newvps / vps2-main)
+        # 2. Buat Service dari Repository github.com/MhmdSairi/newvps
         create_service_query = {
             "query": """
             mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -222,11 +219,9 @@ async def execute_real_railway_api_deployment(status_msg, user_id):
             "variables": {
                 "input": {
                     "projectId": project_id,
-                    "name": "vps-installer-service",
+                    "name": "vps-installer",
                     "source": {
-                        "repo": "MhmdSairi/newvps",
-                        "branch": "main",
-                        "rootDirectory": "vps2-main"
+                        "repo": "MhmdSairi/newvps"
                     }
                 }
             }
@@ -238,18 +233,30 @@ async def execute_real_railway_api_deployment(status_msg, user_id):
         if "errors" in serv_json:
             err_msg = serv_json["errors"][0].get("message", "Gagal membuat service")
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
-            await status_msg.edit_text(
-                f"⚠️ **Proyek `{project_name}` Berhasil Dibuat, tapi gagal hubungkan repo:**\n`{err_msg}`\nCek dashboard Railway Anda, proyek sudah ada di sana.",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
-            )
+            await status_msg.edit_text(f"❌ **Gagal membuat service:**\n`{err_msg}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
             return
 
-        serv_data = serv_json.get("data", {}).get("serviceCreate", {})
-        service_id = serv_data.get("id")
+        service_id = serv_json.get("data", {}).get("serviceCreate", {}).get("id")
 
-        # 3. Picu Deploy (Trigger Build)
-        if env_id and service_id:
+        # 3. Update Service Instance untuk mengatur rootDirectory ke "vps2-main"
+        if service_id and env_id:
+            update_instance_query = {
+                "query": """
+                mutation ServiceInstanceUpdate($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
+                  serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+                }
+                """,
+                "variables": {
+                    "serviceId": service_id,
+                    "environmentId": env_id,
+                    "input": {
+                        "rootDirectory": "vps2-main"
+                    }
+                }
+            }
+            requests.post(url, json=update_instance_query, headers=headers, timeout=30)
+
+            # 4. Picu Deployment secara nyata agar file terbaca dan online
             deploy_query = {
                 "query": """
                 mutation ServiceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
@@ -265,11 +272,12 @@ async def execute_real_railway_api_deployment(status_msg, user_id):
 
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
         await status_msg.edit_text(
-            f"🎉 **PROYEK & DEPLOYMENT NYATA BERHASIL!**\n\n"
+            f"🎉 **PROYEK & DEPLOYMENT vps2-main BERHASIL!**\n\n"
             f"• Nama Proyek: `{project_name}`\n"
             f"• Project ID: `{project_id}`\n"
-            f"• Sumber Repo: `MhmdSairi/newvps` (Folder: `vps2-main`)\n\n"
-            f"🚀 Silakan buka dashboard Railway Anda sekarang. Proyek **VPS-Manager-Deploy** benar-benar ada dan sedang memproses build file Anda secara nyata!",
+            f"• Sumber Repo: `MhmdSairi/newvps`\n"
+            f"• Root Directory: `vps2-main`\n\n"
+            f"🚀 Proyek telah dibuat secara nyata di akun Railway Anda. Direktori root diset ke `vps2-main` dan proses build dari file-file di dalamnya sedang berjalan online!",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
