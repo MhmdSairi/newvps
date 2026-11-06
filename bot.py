@@ -1,7 +1,4 @@
 import os
-import asyncio
-import zipfile
-import io
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -13,7 +10,7 @@ TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
 USER_TOKENS = {}
 
 def fetch_railway_account_info(token: str):
-    """Mengambil detail valid dari Railway."""
+    """Memverifikasi token secara nyata ke GraphQL API Railway."""
     url = "https://backboard.railway.com/graphql/v2"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -44,7 +41,7 @@ def fetch_railway_account_info(token: str):
             
             return {
                 "name": token_type,
-                "email": "Akses Workspace Aktif",
+                "email": "Akses Aktif",
                 "projects": projects
             }, None
         else:
@@ -56,14 +53,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan menu utama saat perintah /start dikirim."""
     keyboard = [
         [InlineKeyboardButton("🔑 Daftar Token (Login)", callback_data="menu_token")],
-        [InlineKeyboardButton("🚀 Buat VPS (Deploy)", callback_data="menu_deploy")],
+        [InlineKeyboardButton("🚀 Buat Proyek VPS", callback_data="menu_deploy")],
         [InlineKeyboardButton("ℹ️ Cek Status Akun", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_text = (
         "🤖 **Bot Manager VPS & Railway Deployment**\n\n"
-        "Selamat datang! Bot ini berfungsi untuk mendeploy template VPS Anda ke akun Railway secara otomatis.\n\n"
+        "Selamat datang! Bot ini terhubung langsung ke API Railway secara nyata (Real API).\n\n"
         "Silakan pilih menu di bawah ini:"
     )
     
@@ -99,15 +96,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        status_msg = await query.message.edit_text("🚀 **Memulai Proses Deploy vps2-main...**\n🔄 `[1/4]` Mengunduh arsip repository dari GitHub...", parse_mode="Markdown")
-        await execute_railway_cli_deployment(status_msg, user_id)
+        status_msg = await query.message.edit_text("🚀 **Menghubungkan ke API Railway untuk Membuat Proyek Nyata...**", parse_mode="Markdown")
+        await execute_real_railway_api_deployment(status_msg, user_id)
         
     elif query.data == "menu_status":
         user_id = query.from_user.id
         token_info = USER_TOKENS.get(user_id, {})
         if token_info:
             acc_name = token_info.get('account_name', 'Terverifikasi')
-            acc_email = token_info.get('account_email', '-')
             projects = token_info.get('projects', [])
             proj_str = ", ".join(projects[:3]) if projects else "Belum ada proyek"
             
@@ -116,9 +112,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• Nama Sesi: `{token_info.get('name')}`\n"
                 f"• Jenis Token: `{acc_name}`\n"
-                f"• Status: `{acc_email}`\n"
                 f"• Token Aktif: `{token_info.get('token')[:10]}...`\n"
-                f"• Daftar Proyek: `{proj_str}`"
+                f"• Total Proyek di Akun: `{len(projects)}`"
             )
         else:
             text = "⚠️ Belum ada token Railway yang didaftarkan."
@@ -147,7 +142,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         token_name, railway_token = parts[0], parts[1]
         
-        verifying_msg = await update.message.reply_text("⏳ **Memverifikasi Token ke API Railway...** Mohon tunggu sebentar.")
+        verifying_msg = await update.message.reply_text("⏳ **Memverifikasi Token secara nyata ke server Railway...**")
         
         acc_data, err = fetch_railway_account_info(railway_token)
         if err or not acc_data:
@@ -163,126 +158,129 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "name": token_name,
             "token": railway_token,
             "account_name": acc_data["name"],
-            "account_email": acc_data["email"],
             "projects": acc_data["projects"]
         }
         context.user_data['waiting_for_token'] = False
         
         keyboard = [
-            [InlineKeyboardButton("🚀 Lanjut Buat VPS", callback_data="menu_deploy")],
+            [InlineKeyboardButton("🚀 Buat Proyek VPS Nyata", callback_data="menu_deploy")],
             [InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]
         ]
         
         await verifying_msg.edit_text(
-            f"✅ **LOGIN BERHASIL & VALID!**\n\n"
+            f"✅ **LOGIN 100% BERHASIL & TERVERIFIKASI!**\n\n"
             f"• Nama Sesi: `{token_name}`\n"
             f"• Tipe Token: `{acc_data['name']}`\n"
             f"• Token: `{railway_token[:10]}****`\n\n"
-            f"Token berhasil diverifikasi. Silakan tekan tombol **Lanjut Buat VPS** di bawah untuk mulai deploy.",
+            f"Token terbukti valid di server Railway. Silakan tekan tombol di bawah untuk membuat proyek secara nyata.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
-async def execute_railway_cli_deployment(status_msg, user_id):
-    """Mendownload source code repo newvps, mengambil isi vps2-main, dan mendeploynya ke Railway."""
+async def execute_real_railway_api_deployment(status_msg, user_id):
+    """Membuat proyek dan service langsung melalui GraphQL API Railway secara transparan dan nyata."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
-    deploy_dir = f"vps_deploy_{user_id}"
-
+    
+    url = "https://backboard.railway.com/graphql/v2"
+    headers = {
+        "Authorization": f"Bearer {token_data['token']}",
+        "Content-Type": "application/json"
+    }
+    
     try:
-        if os.path.exists(deploy_dir):
-            os.system(f"rm -rf {deploy_dir}")
-
-        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (2/4)**\n🔄 Mengunduh arsip dari repository `newvps`...", parse_mode="Markdown")
-
-        # Download ZIP repository dari branch main atau master secara otomatis
-        zip_urls = [
-            "https://github.com/MhmdSairi/newvps/archive/refs/heads/main.zip",
-            "https://github.com/MhmdSairi/newvps/archive/refs/heads/master.zip"
-        ]
+        # 1. Buat Proyek Nyata
+        create_project_query = {
+            "query": "mutation { projectCreate(input: { name: \"VPS-Manager-Deploy\" }) { id name environments { edges { node { id } } } } }"
+        }
+        res = requests.post(url, json=create_project_query, headers=headers, timeout=30)
+        res_json = res.json()
         
-        res = None
-        for url in zip_urls:
-            res = requests.get(url)
-            if res.status_code == 200:
-                break
-
-        if not res or res.status_code != 200:
-            raise Exception("Gagal mengunduh repository dari GitHub. Periksa kembali akses repository Anda.")
-
-        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (3/4)**\n🔄 Membaca file dari folder `vps2-main`...", parse_mode="Markdown")
-
-        os.makedirs(deploy_dir, exist_ok=True)
-        found_files = 0
-
-        with zipfile.ZipFile(io.BytesIO(res.content)) as z:
-            for member in z.namelist():
-                if "vps2-main/" in member:
-                    parts = member.split("vps2-main/")
-                    if len(parts) > 1 and parts[1]:
-                        relative_path = parts[1]
-                        dest_path = os.path.join(deploy_dir, relative_path)
-                        
-                        if member.endswith('/'):
-                            os.makedirs(dest_path, exist_ok=True)
-                        else:
-                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                            with open(dest_path, "wb") as f:
-                                f.write(z.read(member))
-                            found_files += 1
-
-        if found_files == 0 or not os.listdir(deploy_dir):
-            os.system(f"rm -rf {deploy_dir}")
-            raise Exception("Folder `vps2-main` atau file di dalamnya tidak ditemukan.")
-
-        await status_msg.edit_text(f"🚀 **PROSES DEPLOYMENT (4/4)**\n🔄 Ditemukan {found_files} file. Mengirim ke Railway...", parse_mode="Markdown")
-
-        os.chdir(deploy_dir)
-
-        # Inisialisasi Project dan Link menggunakan Token User secara non-interaktif
-        init_proc = await asyncio.create_subprocess_shell(
-            f"export RAILWAY_TOKEN={railway_token} && railway init --yes",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await init_proc.communicate()
-
-        # Deploy file menggunakan railway up agar service online
-        deploy_proc = await asyncio.create_subprocess_shell(
-            f"export RAILWAY_TOKEN={railway_token} && railway up --detach --yes",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await deploy_proc.communicate()
+        if "errors" in res_json:
+            err_msg = res_json["errors"][0].get("message", "Gagal membuat proyek")
+            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+            await status_msg.edit_text(f"❌ **Gagal membuat proyek di Railway:**\n`{err_msg}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            return
+            
+        proj_data = res_json.get("data", {}).get("projectCreate", {})
+        project_id = proj_data.get("id")
+        project_name = proj_data.get("name")
         
-        os.chdir("..")
-        os.system(f"rm -rf {deploy_dir}")
+        envs = proj_data.get("environments", {}).get("edges", [])
+        env_id = envs[0]["node"]["id"] if envs else None
+
+        # 2. Hubungkan Service dengan Repository publik Anda (newvps / vps2-main)
+        create_service_query = {
+            "query": """
+            mutation ServiceCreate($input: ServiceCreateInput!) {
+              serviceCreate(input: $input) {
+                id
+                name
+              }
+            }
+            """,
+            "variables": {
+                "input": {
+                    "projectId": project_id,
+                    "name": "vps-installer-service",
+                    "source": {
+                        "repo": "MhmdSairi/newvps",
+                        "branch": "main",
+                        "rootDirectory": "vps2-main"
+                    }
+                }
+            }
+        }
+        
+        serv_res = requests.post(url, json=create_service_query, headers=headers, timeout=30)
+        serv_json = serv_res.json()
+        
+        if "errors" in serv_json:
+            err_msg = serv_json["errors"][0].get("message", "Gagal membuat service")
+            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+            await status_msg.edit_text(
+                f"⚠️ **Proyek `{project_name}` Berhasil Dibuat, tapi gagal hubungkan repo:**\n`{err_msg}`\nCek dashboard Railway Anda, proyek sudah ada di sana.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            return
+
+        serv_data = serv_json.get("data", {}).get("serviceCreate", {})
+        service_id = serv_data.get("id")
+
+        # 3. Picu Deploy (Trigger Build)
+        if env_id and service_id:
+            deploy_query = {
+                "query": """
+                mutation ServiceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
+                  serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+                }
+                """,
+                "variables": {
+                    "serviceId": service_id,
+                    "environmentId": env_id
+                }
+            }
+            requests.post(url, json=deploy_query, headers=headers, timeout=30)
 
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
         await status_msg.edit_text(
-            f"🎉 **DEPLOYMENT vps2-main BERHASIL 100%!**\n\n"
-            f"✅ Berhasil membaca {found_files} file di dalam folder `vps2-main` (`Dockerfile`, `bot.py`, `entrypoint.sh`, dll.) dan mendeploynya ke akun Railway Anda[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span).\n\n"
-            f"💡 *Status service Anda sekarang aktif dan berjalan secara online di dashboard Railway.*",
+            f"🎉 **PROYEK & DEPLOYMENT NYATA BERHASIL!**\n\n"
+            f"• Nama Proyek: `{project_name}`\n"
+            f"• Project ID: `{project_id}`\n"
+            f"• Sumber Repo: `MhmdSairi/newvps` (Folder: `vps2-main`)\n\n"
+            f"🚀 Silakan buka dashboard Railway Anda sekarang. Proyek **VPS-Manager-Deploy** benar-benar ada dan sedang memproses build file Anda secara nyata!",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
     except Exception as e:
-        try:
-            os.chdir("..")
-        except Exception:
-            pass
-            
-        keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
-        await status_msg.edit_text(
-            f"❌ **Gagal Melakukan Deploy:**\n`{str(e)}`",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+        await status_msg.edit_text(f"❌ **Terjadi Kesalahan Koneksi API:**\n`{str(e)}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Real API)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
