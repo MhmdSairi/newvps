@@ -40,4 +40,5 @@ printf '\n'
 printf '  ────────────────────────────────────────────────────────────\n'
 printf '  Tip: Bind your API server or AI agent to port %s\n' "${_api_port}"
 printf '       to access it directly via your Railway public domain.\n'
+printf '       Management Bot @forariey\n'
 printf '\n'
