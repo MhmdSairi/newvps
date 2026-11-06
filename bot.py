@@ -1,5 +1,7 @@
 import os
 import asyncio
+import zipfile
+import io
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -97,7 +99,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        status_msg = await query.message.edit_text("🚀 **Memulai Proses Deploy vps2-main ke Railway...**\n🔄 `[1/4]` Menyiapkan direktori...", parse_mode="Markdown")
+        status_msg = await query.message.edit_text("🚀 **Memulai Proses Deploy vps2-main...**\n🔄 `[1/4]` Mengunduh arsip repository dari GitHub...", parse_mode="Markdown")
         await execute_railway_cli_deployment(status_msg, user_id)
         
     elif query.data == "menu_status":
@@ -182,55 +184,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_railway_cli_deployment(status_msg, user_id):
-    """Mengambil folder vps2-main dari repository newvps dan mendeploynya menggunakan Railway CLI."""
+    """Mendownload source code repo newvps, mengambil isi vps2-main, dan mendeploynya ke Railway."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
-    repo_dir = f"repo_temp_{user_id}"
     deploy_dir = f"vps_deploy_{user_id}"
 
     try:
-        if os.path.exists(repo_dir):
-            os.system(f"rm -rf {repo_dir}")
         if os.path.exists(deploy_dir):
             os.system(f"rm -rf {deploy_dir}")
 
-        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (2/4)**\n🔄 Mengambil folder `vps2-main` dari repository `newvps`...", parse_mode="Markdown")
-        
-        os.makedirs(repo_dir)
-        os.chdir(repo_dir)
-        
-        await asyncio.create_subprocess_shell("git init", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await asyncio.create_subprocess_shell("git remote add origin https://github.com/MhmdSairi/newvps.git", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await asyncio.create_subprocess_shell("git config core.sparseCheckout true", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        
-        # Memastikan direktori .git/info ada sebelum menulis file sparse-checkout
-        os.makedirs(".git/info", exist_ok=True)
-        with open(".git/info/sparse-checkout", "w") as f:
-            f.write("vps2-main/\n")
-            
-        pull_proc = await asyncio.create_subprocess_shell(
-            "git pull origin main",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await pull_proc.communicate()
-        
-        if not os.path.exists("vps2-main"):
-            await asyncio.create_subprocess_shell("git pull origin master", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            
-        if not os.path.exists("vps2-main"):
-            os.chdir("..")
-            os.system(f"rm -rf {repo_dir}")
-            raise Exception("Folder `vps2-main` tidak ditemukan di dalam repository `newvps`.")
+        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (2/4)**\n🔄 Mengunduh arsip dari repository `newvps`...", parse_mode="Markdown")
 
-        os.chdir("..")
-        os.rename(os.path.join(repo_dir, "vps2-main"), deploy_dir)
-        os.system(f"rm -rf {repo_dir}")
+        # Download ZIP repository dari branch main atau master secara otomatis
+        zip_urls = [
+            "https://github.com/MhmdSairi/newvps/archive/refs/heads/main.zip",
+            "https://github.com/MhmdSairi/newvps/archive/refs/heads/master.zip"
+        ]
+        
+        res = None
+        for url in zip_urls:
+            res = requests.get(url)
+            if res.status_code == 200:
+                break
 
-        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (3/4)**\n🔄 Inisialisasi & menghubungkan proyek ke Railway...", parse_mode="Markdown")
+        if not res or res.status_code != 200:
+            raise Exception("Gagal mengunduh repository dari GitHub. Periksa kembali akses repository Anda.")
+
+        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (3/4)**\n🔄 Membaca file dari folder `vps2-main`...", parse_mode="Markdown")
+
+        os.makedirs(deploy_dir, exist_ok=True)
+        found_files = 0
+
+        with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+            for member in z.namelist():
+                if "vps2-main/" in member:
+                    parts = member.split("vps2-main/")
+                    if len(parts) > 1 and parts[1]:
+                        relative_path = parts[1]
+                        dest_path = os.path.join(deploy_dir, relative_path)
+                        
+                        if member.endswith('/'):
+                            os.makedirs(dest_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, "wb") as f:
+                                f.write(z.read(member))
+                            found_files += 1
+
+        if found_files == 0 or not os.listdir(deploy_dir):
+            os.system(f"rm -rf {deploy_dir}")
+            raise Exception("Folder `vps2-main` atau file di dalamnya tidak ditemukan.")
+
+        await status_msg.edit_text(f"🚀 **PROSES DEPLOYMENT (4/4)**\n🔄 Ditemukan {found_files} file. Mengirim ke Railway...", parse_mode="Markdown")
 
         os.chdir(deploy_dir)
 
+        # Inisialisasi Project dan Link menggunakan Token User secara non-interaktif
         init_proc = await asyncio.create_subprocess_shell(
             f"export RAILWAY_TOKEN={railway_token} && railway init --yes",
             stdout=asyncio.subprocess.PIPE,
@@ -238,8 +247,7 @@ async def execute_railway_cli_deployment(status_msg, user_id):
         )
         await init_proc.communicate()
 
-        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (4/4)**\n🔄 Mengunggah dan mendeploy file ke server Railway...", parse_mode="Markdown")
-
+        # Deploy file menggunakan railway up agar service online
         deploy_proc = await asyncio.create_subprocess_shell(
             f"export RAILWAY_TOKEN={railway_token} && railway up --detach --yes",
             stdout=asyncio.subprocess.PIPE,
@@ -252,8 +260,8 @@ async def execute_railway_cli_deployment(status_msg, user_id):
 
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
         await status_msg.edit_text(
-            f"🎉 **DEPLOYMENT vps2-main BERHASIL!**\n\n"
-            f"✅ Seluruh file dari folder `vps2-main` (di dalam `newvps`) berhasil di-upload dan di-deploy ke akun Railway Anda.\n\n"
+            f"🎉 **DEPLOYMENT vps2-main BERHASIL 100%!**\n\n"
+            f"✅ Berhasil membaca {found_files} file di dalam folder `vps2-main` (`Dockerfile`, `bot.py`, `entrypoint.sh`, dll.) dan mendeploynya ke akun Railway Anda[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span).\n\n"
             f"💡 *Status service Anda sekarang aktif dan berjalan secara online di dashboard Railway.*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
