@@ -6,26 +6,35 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # Token Bot Telegram Anda
 TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
 
-# Penyimpanan token sementara berbasis dictionary per user ID
+# Penyimpanan token sementara per user ID
 USER_TOKENS = {}
 
 async def verify_railway_token(railway_token):
-    """Fungsi validasi asli ke Railway API untuk memastikan token benar dan aktif."""
+    """Fungsi login/validasi asli ke Railway API v2."""
     url = "https://backboard.railway.com/graphql/v2"
+    clean_token = railway_token.strip().replace('"', '').replace("'", "")
     headers = {
-        "Authorization": f"Bearer {railway_token.strip()}",
+        "Authorization": f"Bearer {clean_token}",
         "Content-Type": "application/json"
     }
-    query = {"query": "{ me { id name email } }"}
     
-    try:
-        response = requests.post(url, json=query, headers=headers, timeout=15)
-        result = response.json()
-        if "data" in result and result["data"].get("me"):
-            return True, result["data"]["me"]
-        return False, None
-    except Exception:
-        return False, None
+    # Query universal untuk cek akun/workspace yang pasti diterima server Railway
+    queries = [
+        {"query": "{ me { id name email } }"},
+        {"query": "{ workspaces { id name } }"},
+        {"query": "{ projects { edges { node { id name } } } }"}
+    ]
+    
+    for q in queries:
+        try:
+            response = requests.post(url, json=q, headers=headers, timeout=15)
+            result = response.json()
+            if "data" in result and result["data"]:
+                return True, clean_token
+        except Exception:
+            continue
+            
+    return False, clean_token
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan menu utama saat perintah /start dikirim."""
@@ -38,8 +47,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome_text = (
         "🤖 **Bot Manager VPS & Railway Deployment**\n\n"
-        "Selamat datang! Bot ini berfungsi untuk mendeploy template folder `vps2-main` ke akun Railway Anda secara otomatis.\n\n"
-        "Silakan pilih menu di bawah ini:"
+        "Selamat datang! Silakan daftarkan token Railway Anda untuk mulai mendeploy template `vps2-main` secara otomatis."
     )
     
     if update.message:
@@ -65,20 +73,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id not in USER_TOKENS:
             await query.message.edit_text(
                 "❌ **Token Belum Terdaftar!**\n\n"
-                "Silakan pilih menu **Daftar Token (Login)** terlebih dahulu untuk memasukkan token Railway Anda.",
+                "Silakan pilih menu **Daftar Token (Login)** terlebih dahulu.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
                 parse_mode="Markdown"
             )
             return
         
-        await query.message.edit_text("🚀 **Menghubungkan ke Railway & Mendeploy Template `vps2-main`...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
+        await query.message.edit_text("🚀 **Sedang Mendeploy Template `vps2-main` ke Akun Railway Anda...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
         await execute_railway_api_deployment(query, user_id)
         
     elif query.data == "menu_status":
         user_id = query.from_user.id
         token_info = USER_TOKENS.get(user_id, {})
         if token_info:
-            text = f"✅ **Akun Terhubung**\n• Nama Token: `{token_info.get('name')}`\n• Email/Akun: `{token_info.get('email', 'Connected')}`"
+            text = f"✅ **Akun Terhubung**\n• Nama Token: `{token_info.get('name')}`"
         else:
             text = "⚠️ Belum ada token Railway yang didaftarkan."
         
@@ -89,7 +97,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menangkap input format token dari pengguna dan memvalidasi ke Railway."""
+    """Menangkap input format login token dari pengguna."""
     user_id = update.message.from_user.id
     text = update.message.text.strip()
     
@@ -101,18 +109,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         token_name, railway_token = parts[0], parts[1].strip()
         
-        # Validasi login nyata ke Railway API
         msg_wait = await update.message.reply_text("⏳ Memverifikasi token ke server Railway...")
-        is_valid, user_data = await verify_railway_token(railway_token)
+        is_valid, clean_token = await verify_railway_token(railway_token)
         
         if not is_valid:
             await msg_wait.edit_text("❌ **Login Gagal!** Token Railway ditolak oleh server. Pastikan token Anda aktif dan benar.")
             return
         
+        # Simpan token jika sukses login
         USER_TOKENS[user_id] = {
             "name": token_name,
-            "token": railway_token,
-            "email": user_data.get("email", "N/A")
+            "token": clean_token
         }
         context.user_data['waiting_for_token'] = False
         
@@ -123,15 +130,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await msg_wait.edit_text(
             f"✅ **Login Berhasil & Token Disimpan!** 🎉\n\n"
-            f"• Nama Token: `{token_name}`\n"
-            f"• Akun: `{user_data.get('name', 'User')} ({user_data.get('email', '')})`\n\n"
-            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS** di bawah untuk mendeploy folder `vps2-main` ke akun Anda.",
+            f"• Nama Token: `{token_name}`\n\n"
+            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS** di bawah untuk mendeploy folder `vps2-main`.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
 async def execute_railway_api_deployment(query, user_id):
-    """Membuat project di Railway user dan mendeploy isi folder vps2-main secara otomatis."""
+    """Membuat project baru di Railway user dan mendeploy file dari folder vps2-main secara otomatis."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
     
@@ -162,7 +168,7 @@ async def execute_railway_api_deployment(query, user_id):
         project_data = result.get("data", {}).get("projectCreate", {})
         project_id = project_data.get("id")
         
-        # 2. Tambahkan Service dengan Root Directory mengarah ke folder "vps2-main"
+        # 2. Tambahkan Service yang otomatis mengarah ke folder/konfigurasi vps2-main
         create_service_query = {
             "query": """
                 mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -188,8 +194,8 @@ async def execute_railway_api_deployment(query, user_id):
         await query.message.edit_text(
             f"✅ **Deployment Template `vps2-main` Berhasil!** 🎉\n\n"
             f"• Project ID: `{project_id}`\n"
-            f"• Sumber Direktori: `/vps2-main` (Dockerfile & Entrypoint aktif)\n\n"
-            f"🚀 Proyek VPS Anda telah berhasil diinisialisasi dan sedang dibangun secara otomatis di dalam dashboard akun Railway Anda.",
+            f"• Direktori Sumber: `vps2-main`\n\n"
+            f"🚀 Proyek VPS Anda telah berhasil diinisialisasi dan sedang dibangun otomatis di dalam dashboard akun Railway Anda.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
             parse_mode="Markdown"
         )
