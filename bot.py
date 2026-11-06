@@ -4,7 +4,7 @@ import json
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
@@ -66,8 +66,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update.message, user_data)
     else:
         keyboard = [
-            [InlineKeyboardButton("🔑 LOGIN TOKEN RAILWAY", callback_data="login_railway", style="success")],
-            [InlineKeyboardButton("ℹ️ CARA DAPAT TOKEN", callback_data="help_token", style="primary")]
+            [InlineKeyboardButton("🔑 LOGIN TOKEN RAILWAY", callback_data="login_railway")],
+            [InlineKeyboardButton("ℹ️ CARA DAPAT TOKEN", callback_data="help_token")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -92,9 +92,9 @@ async def show_main_menu(target_obj, user_data):
     )
 
     keyboard = [
-        [InlineKeyboardButton("🚀 DEPLOY SEKARANG", callback_data="start_deploy", style="success")],
-        [InlineKeyboardButton("🔄 GANTI TOKEN LOGIN", callback_data="login_railway", style="primary")],
-        [InlineKeyboardButton("❌ KELUAR / RESET", callback_data="logout_session", style="danger")]
+        [InlineKeyboardButton("🚀 DEPLOY SEKARANG", callback_data="start_deploy")],
+        [InlineKeyboardButton("🔄 GANTI TOKEN LOGIN", callback_data="login_railway")],
+        [InlineKeyboardButton("❌ KELUAR / RESET", callback_data="logout_session")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -114,7 +114,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "login_railway":
         USER_SESSIONS[chat_id] = {'status': 'AWAITING_TOKEN_NAME'}
-        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
+        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home")]]
         await query.message.edit_text(
             "🔑 **LOGIN TOKEN RAILWAY**\n\n"
             "Langkah 1/2: Silakan ketik **Nama Token / Nama Anda** untuk identifikasi sesi ini:",
@@ -124,8 +124,8 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "help_token":
         keyboard = [
-            [InlineKeyboardButton("🔑 LOGIN SEKARANG", callback_data="login_railway", style="success")],
-            [InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]
+            [InlineKeyboardButton("🔑 LOGIN SEKARANG", callback_data="login_railway")],
+            [InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home")]
         ]
         await query.message.edit_text(
             "ℹ️ **CARA MENDAPATKAN TOKEN RAILWAY:**\n\n"
@@ -180,7 +180,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stdout, stderr = await deploy_process.communicate()
             os.chdir("..")
 
-            keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
+            keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home")]]
             await status_msg.edit_text(
                 "🎉 **DEPLOYMENT BERHASIL DIEKSEKUSI!**\n\n"
                 "✅ `[1/3]` File repository diunduh.\n"
@@ -192,7 +192,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         except Exception as e:
-            keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
+            keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home")]]
             await status_msg.edit_text(f"❌ **Gagal melakukan deploy:**\n`{str(e)}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif query.data == "logout_session":
@@ -200,7 +200,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del db[chat_id]
             save_db(db)
         
-        keyboard = [[InlineKeyboardButton("🔑 LOGIN KEMBALI", callback_data="login_railway", style="success")]]
+        keyboard = [[InlineKeyboardButton("🔑 LOGIN KEMBALI", callback_data="login_railway")]]
         await query.message.edit_text(
             "🔒 **SESI BERHASIL DIHAPUS**\n\nToken dan data login Anda telah dihapus dari database bot.",
             reply_markup=InlineKeyboardMarkup(keyboard),
@@ -213,8 +213,8 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_main_menu(query.message, user_data)
         else:
             keyboard = [
-                [InlineKeyboardButton("🔑 LOGIN TOKEN RAILWAY", callback_data="login_railway", style="success")],
-                [InlineKeyboardButton("ℹ️ CARA DAPAT TOKEN", callback_data="help_token", style="primary")]
+                [InlineKeyboardButton("🔑 LOGIN TOKEN RAILWAY", callback_data="login_railway")],
+                [InlineKeyboardButton("ℹ️ CARA DAPAT TOKEN", callback_data="help_token")]
             ]
             await query.message.edit_text(
                 "✨ **BOT AUTOMATION DEPLOY VPS RAILWAY** ✨\n\nSilakan login terlebih dahulu:",
@@ -236,7 +236,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         USER_SESSIONS[chat_id]['token_name'] = text
         USER_SESSIONS[chat_id]['status'] = 'AWAITING_RAILWAY_TOKEN'
         
-        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home", style="primary")]]
+        keyboard = [[InlineKeyboardButton("🏠 KEMBALI KE MENU UTAMA", callback_data="back_to_home")]]
         await update.message.reply_text(
             f"✅ Nama Token dicatat: `{text}`\n\n"
             "Langkah 2/2: Sekarang silakan ketik / kirim **Token Railway** Anda (contoh: `rlwy_wksp_...`):",
@@ -261,23 +261,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🎉 **LOGIN BERHASIL!** Token Railway Anda telah disimpan dengan aman.")
         await show_main_menu(update.message, db[chat_id])
 
-async def main():
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+def main():
+    # Inisialisasi bot menggunakan builder standar v21+ yang aman dari error Updater
+    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_callbacks))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(handle_callbacks))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    logger.info("Bot Deploy VPS Railway berjalan...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    
-    stop_event = asyncio.Event()
-    await stop_event.wait()
+    logger.info("🤖 Memulai Bot Deploy VPS Railway...")
+    application.run_polling()
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot dihentikan.")
+    main()
