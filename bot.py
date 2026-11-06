@@ -17,7 +17,6 @@ def fetch_railway_account_info(token: str):
         "Content-Type": "application/json"
     }
     
-    # Query aman untuk Workspace / Account token (mengambil daftar proyek yang bisa diakses)
     query = """
     {
       projects {
@@ -39,8 +38,6 @@ def fetch_railway_account_info(token: str):
             
             data = result.get("data", {})
             projects = [edge["node"]["name"] for edge in data.get("projects", {}).get("edges", [])]
-            
-            # Tentukan tipe/label token berdasarkan prefix-nya
             token_type = "Workspace Token" if "rlwy_wksp_" in token else "Account / Personal Token"
             
             return {
@@ -150,7 +147,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         verifying_msg = await update.message.reply_text("⏳ **Memverifikasi Token ke API Railway...** Mohon tunggu sebentar.")
         
-        # Validasi token secara real-time ke API Railway
         acc_data, err = fetch_railway_account_info(railway_token)
         if err or not acc_data:
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
@@ -161,7 +157,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Simpan sesi user beserta data valid dari Railway
         USER_TOKENS[user_id] = {
             "name": token_name,
             "token": railway_token,
@@ -187,7 +182,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_railway_api_deployment(query, user_id):
-    """Melakukan deploy otomatis membuat proyek dan memasang repository publik GitHub Anda ke Railway."""
+    """Membuat proyek, menghubungkan repository GitHub, dan memicu deployment otomatis agar service tidak offline."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
     
@@ -197,12 +192,11 @@ async def execute_railway_api_deployment(query, user_id):
         "Content-Type": "application/json"
     }
     
-    # 1. Buat Project Baru
-    create_project_query = {
-        "query": "mutation { projectCreate(input: { name: \"VPS-Manager-Project\" }) { id name } }"
-    }
-    
     try:
+        # 1. Buat Project Baru
+        create_project_query = {
+            "query": "mutation { projectCreate(input: { name: \"VPS-Manager-Project\" }) { id name environments { edges { node { id } } } } }"
+        }
         response = requests.post(url, json=create_project_query, headers=headers, timeout=30)
         result = response.json()
         
@@ -210,7 +204,7 @@ async def execute_railway_api_deployment(query, user_id):
             err_msg = result["errors"][0].get("message", "Terjadi kesalahan API")
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
             await query.message.edit_text(
-                f"❌ **Gagal membuat proyek Railway:**\n`{err_msg}`\n\nPastikan token Anda memiliki izin akses project.",
+                f"❌ **Gagal membuat proyek Railway:**\n`{err_msg}`",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -220,7 +214,16 @@ async def execute_railway_api_deployment(query, user_id):
         project_id = project_data.get("id")
         project_name = project_data.get("name")
         
-        # 2. Tambahkan Service dari Repository Publik GitHub Anda (vps2-main)
+        # Ambil environment ID pertama dari project yang baru dibuat
+        envs = project_data.get("environments", {}).get("edges", [])
+        environment_id = envs[0]["node"]["id"] if envs else None
+
+        if not environment_id:
+            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
+            await query.message.edit_text("❌ Gagal mendapatkan Environment ID dari proyek Railway.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            return
+
+        # 2. Tambahkan Service dari Repository Publik GitHub Anda (MhmdSairi/vps2-main)
         create_service_query = {
             "query": """
             mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -248,23 +251,49 @@ async def execute_railway_api_deployment(query, user_id):
             err_msg = service_result["errors"][0].get("message", "Gagal mendeploy repo")
             keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
             await query.message.edit_text(
-                f"⚠️ **Proyek Dibuat, tapi Gagal Menghubungkan Repo:**\n`{err_msg}`\n• Project ID: `{project_id}`",
+                f"⚠️ **Proyek Dibuat, tapi Gagal Menghubungkan Repo:**\n`{err_msg}`",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
             return
         
         service_data = service_result.get("data", {}).get("serviceCreate", {})
+        service_id = service_data.get("id")
         service_name = service_data.get("name", "vps-installer")
         
+        # 3. Memicu Deployment Secara Paksa (Agar Service Aktif dan Tidak Offline)
+        deploy_query = {
+            "query": """
+            mutation ServiceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
+              serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+            }
+            """,
+            "variables": {
+                "serviceId": service_id,
+                "environmentId": environment_id
+            }
+        }
+        
+        deploy_response = requests.post(url, json=deploy_query, headers=headers, timeout=30)
+        deploy_result = deploy_response.json()
+        
+        if "errors" in deploy_result:
+            err_msg = deploy_result["errors"][0].get("message", "Gagal memicu deployment")
+            keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
+            await query.message.edit_text(
+                f"⚠️ **Service Terhubung, tapi Trigger Deploy Gagal:**\n`{err_msg}`\n\nSilakan build secara manual di dashboard Railway.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            return
+
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
         await query.message.edit_text(
-            f"🎉 **DEPLOYMENT VPS BERHASIL DIKERJAKAN!**\n\n"
+            f"🎉 **DEPLOYMENT VPS BERHASIL DIPICU!**\n\n"
             f"• Nama Proyek: `{project_name}`\n"
-            f"• Project ID: `{project_id}`\n"
             f"• Service: `{service_name}`\n"
             f"• Sumber Repo: `MhmdSairi/vps2-main`\n\n"
-            f"⏳ Railway sedang melakukan proses *build & deploy* otomatis dari repository GitHub Anda. Silakan cek dashboard Railway Anda.",
+            f"🚀 Perintah build & deploy telah dikirim ke Railway. Status service Anda sekarang akan berubah dari offline menjadi **Building / Online** secara otomatis!",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
