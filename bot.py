@@ -1,4 +1,5 @@
 import os
+import asyncio
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -10,13 +11,12 @@ TELEGRAM_BOT_TOKEN = "9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08"
 USER_TOKENS = {}
 
 def fetch_railway_account_info(token: str):
-    """Mengambil detail valid dari Railway (mendukung Account, Workspace, maupun Project Token)."""
+    """Mengambil detail valid dari Railway."""
     url = "https://backboard.railway.com/graphql/v2"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    
     query = """
     {
       projects {
@@ -97,8 +97,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        await query.message.edit_text("🚀 **Menghubungkan ke API Railway & Membuat Proyek VPS...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
-        await execute_railway_api_deployment(query, user_id)
+        status_msg = await query.message.edit_text("🚀 **Memulai Proses Deploy vps2-main ke Railway...**\n🔄 `[1/4]` Menyiapkan direktori...", parse_mode="Markdown")
+        await execute_railway_cli_deployment(status_msg, user_id)
         
     elif query.data == "menu_status":
         user_id = query.from_user.id
@@ -181,127 +181,99 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-async def execute_railway_api_deployment(query, user_id):
-    """Membuat proyek, menghubungkan repository GitHub, dan memicu deployment otomatis agar service tidak offline."""
+async def execute_railway_cli_deployment(status_msg, user_id):
+    """Mengambil folder vps2-main dari repository newvps dan mendeploynya menggunakan Railway CLI."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
-    
-    url = "https://backboard.railway.com/graphql/v2"
-    headers = {
-        "Authorization": f"Bearer {railway_token}",
-        "Content-Type": "application/json"
-    }
-    
+    repo_dir = f"repo_temp_{user_id}"
+    deploy_dir = f"vps_deploy_{user_id}"
+
     try:
-        # 1. Buat Project Baru
-        create_project_query = {
-            "query": "mutation { projectCreate(input: { name: \"VPS-Manager-Project\" }) { id name environments { edges { node { id } } } } }"
-        }
-        response = requests.post(url, json=create_project_query, headers=headers, timeout=30)
-        result = response.json()
+        # Bersihkan direktori lama jika ada
+        if os.path.exists(repo_dir):
+            os.system(f"rm -rf {repo_dir}")
+        if os.path.exists(deploy_dir):
+            os.system(f"rm -rf {deploy_dir}")
+
+        # 1. Clone repository newvps dengan sparse-checkout khusus folder vps2-main
+        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (2/4)**\n🔄 Mengambil folder `vps2-main` dari repository `newvps`...", parse_mode="Markdown")
         
-        if "errors" in result:
-            err_msg = result["errors"][0].get("message", "Terjadi kesalahan API")
-            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
-            await query.message.edit_text(
-                f"❌ **Gagal membuat proyek Railway:**\n`{err_msg}`",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
-            )
-            return
+        os.makedirs(repo_dir)
+        os.chdir(repo_dir)
+        
+        await asyncio.create_subprocess_shell("git init", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        await asyncio.create_subprocess_shell("git remote add origin https://github.com/MhmdSairi/newvps.git", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        await asyncio.create_subprocess_shell("git config core.sparseCheckout true", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        
+        with open(".git/info/sparse-checkout", "w") as f:
+            f.write("vps2-main/\n")
             
-        project_data = result.get("data", {}).get("projectCreate", {})
-        project_id = project_data.get("id")
-        project_name = project_data.get("name")
+        pull_proc = await asyncio.create_subprocess_shell(
+            "git pull origin main",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await pull_proc.communicate()
         
-        # Ambil environment ID pertama dari project yang baru dibuat
-        envs = project_data.get("environments", {}).get("edges", [])
-        environment_id = envs[0]["node"]["id"] if envs else None
+        if not os.path.exists("vps2-main"):
+            # Coba branch master jika main tidak ada
+            await asyncio.create_subprocess_shell("git pull origin master", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            
+        if not os.path.exists("vps2-main"):
+            os.chdir("..")
+            os.system(f"rm -rf {repo_dir}")
+            raise Exception("Folder `vps2-main` tidak ditemukan di dalam repository `newvps`.")
 
-        if not environment_id:
-            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
-            await query.message.edit_text("❌ Gagal mendapatkan Environment ID dari proyek Railway.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-            return
+        # Pindahkan isi folder vps2-main ke folder deploy bersih
+        os.chdir("..")
+        os.rename(os.path.join(repo_dir, "vps2-main"), deploy_dir)
+        os.system(f"rm -rf {repo_dir}")
 
-        # 2. Tambahkan Service dari Repository Publik GitHub Anda (MhmdSairi/vps2-main)
-        create_service_query = {
-            "query": """
-            mutation ServiceCreate($input: ServiceCreateInput!) {
-              serviceCreate(input: $input) {
-                id
-                name
-              }
-            }
-            """,
-            "variables": {
-                "input": {
-                    "projectId": project_id,
-                    "name": "vps-installer",
-                    "source": {
-                        "repo": "MhmdSairi/vps2-main"
-                    }
-                }
-            }
-        }
+        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (3/4)**\n🔄 Inisialisasi & menghubungkan proyek ke Railway...", parse_mode="Markdown")
+
+        # Masuk ke dalam folder deploy
+        os.chdir(deploy_dir)
+
+        # 2. Inisialisasi Project dan Link menggunakan Token User secara non-interaktif
+        init_proc = await asyncio.create_subprocess_shell(
+            f"export RAILWAY_TOKEN={railway_token} && railway init --yes",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await init_proc.communicate()
+
+        await status_msg.edit_text("🚀 **PROSES DEPLOYMENT (4/4)**\n🔄 Mengunggah dan mendeploy file ke server Railway...", parse_mode="Markdown")
+
+        # 3. Deploy file menggunakan railway up
+        deploy_proc = await asyncio.create_subprocess_shell(
+            f"export RAILWAY_TOKEN={railway_token} && railway up --detach --yes",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await deploy_proc.communicate()
         
-        service_response = requests.post(url, json=create_service_query, headers=headers, timeout=30)
-        service_result = service_response.json()
-        
-        if "errors" in service_result:
-            err_msg = service_result["errors"][0].get("message", "Gagal mendeploy repo")
-            keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
-            await query.message.edit_text(
-                f"⚠️ **Proyek Dibuat, tapi Gagal Menghubungkan Repo:**\n`{err_msg}`",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
-            )
-            return
-        
-        service_data = service_result.get("data", {}).get("serviceCreate", {})
-        service_id = service_data.get("id")
-        service_name = service_data.get("name", "vps-installer")
-        
-        # 3. Memicu Deployment Secara Paksa (Agar Service Aktif dan Tidak Offline)
-        deploy_query = {
-            "query": """
-            mutation ServiceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
-              serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
-            }
-            """,
-            "variables": {
-                "serviceId": service_id,
-                "environmentId": environment_id
-            }
-        }
-        
-        deploy_response = requests.post(url, json=deploy_query, headers=headers, timeout=30)
-        deploy_result = deploy_response.json()
-        
-        if "errors" in deploy_result:
-            err_msg = deploy_result["errors"][0].get("message", "Gagal memicu deployment")
-            keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
-            await query.message.edit_text(
-                f"⚠️ **Service Terhubung, tapi Trigger Deploy Gagal:**\n`{err_msg}`\n\nSilakan build secara manual di dashboard Railway.",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
-            )
-            return
+        # Keluar kembali ke folder utama bot dan bersihkan direktori temp
+        os.chdir("..")
+        os.system(f"rm -rf {deploy_dir}")
 
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
-        await query.message.edit_text(
-            f"🎉 **DEPLOYMENT VPS BERHASIL DIPICU!**\n\n"
-            f"• Nama Proyek: `{project_name}`\n"
-            f"• Service: `{service_name}`\n"
-            f"• Sumber Repo: `MhmdSairi/vps2-main`\n\n"
-            f"🚀 Perintah build & deploy telah dikirim ke Railway. Status service Anda sekarang akan berubah dari offline menjadi **Building / Online** secara otomatis!",
+        await status_msg.edit_text(
+            f"🎉 **DEPLOYMENT vps2-main BERHASIL!**\n\n"
+            f"✅ Seluruh file dari folder `vps2-main` (di dalam `newvps`) berhasil di-upload dan di-deploy ke akun Railway Anda.\n\n"
+            f"💡 *Status service Anda sekarang aktif dan berjalan secara online di dashboard Railway.*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-        
+
     except Exception as e:
-        keyboard = [[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]
-        await query.message.edit_text(
-            f"❌ Terjadi kesalahan koneksi API:\n`{str(e)}`",
+        try:
+            os.chdir("..")
+        except Exception:
+            pass
+            
+        keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
+        await status_msg.edit_text(
+            f"❌ **Gagal Melakukan Deploy:**\n`{str(e)}`",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
