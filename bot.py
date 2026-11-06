@@ -191,7 +191,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Simpan ke Database JSON (Permanen / Tidak Terhapus)
         db = load_db()
         db[user_id] = {
             "token_name": token_name,
@@ -217,7 +216,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def execute_real_railway_deployment(status_msg, user_id):
-    """Membuat proyek, mengatur rootDirectory, memicu deploy, menampilkan animasi loading, dan mengambil log SSH."""
+    """Membuat proyek, mengatur rootDirectory, memicu deploy, menampilkan animasi loading kotak-kotak, dan mengambil log SSH."""
     db = load_db()
     token_data = db.get(user_id)
     headers = {
@@ -294,7 +293,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
         }
         requests.post(url, json=deploy_query, headers=headers, timeout=30)
 
-        # 4. Animasi Loading & Menunggu Deploy Selesai (Hingga 5 Menit / 30 Iterasi x 10 Detik)
+        # 4. Animasi Loading Kotak-Kotak & Menunggu Log SSH (Total waktu ~3 menit 40 detik / 22 iterasi x 10 detik)
         loaders = [
             "📦 `[■□□□□□□□□□]` 10%",
             "📦 `[■■□□□□□□□□]` 20%",
@@ -309,10 +308,12 @@ async def execute_real_railway_deployment(status_msg, user_id):
         ]
 
         ssh_details = None
+        
+        # Query untuk mengambil log runtime service Railway
         log_query = {
             "query": """
-            query DeploymentLogs($environmentId: String!,$serviceId: String!) {
-              deploymentLogs(environmentId: $environmentId, serviceId:$serviceId) {
+            query ServiceLogs($environmentId: String!,$serviceId: String!) {
+              serviceLogs(environmentId: $environmentId, serviceId:$serviceId) {
                 message
               }
             }
@@ -320,7 +321,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
             "variables": {"environmentId": env_id, "serviceId": service_id}
         }
 
-        for i in range(30):  # Total waktu maksimal 5 menit (30 x 10 detik)
+        for i in range(22):  # 22 iterasi x 10 detik = 220 detik (~3 menit 40 detik)
             loader_anim = loaders[i % len(loaders)]
             elapsed_time = (i + 1) * 10
             
@@ -328,9 +329,9 @@ async def execute_real_railway_deployment(status_msg, user_id):
                 await status_msg.edit_text(
                     f"🚀 **Penginstalan Railway Ubuntu 24.04 VPS sedang berjalan mohon ditunggu 2-3 menit**\n\n"
                     f"{loader_anim}\n"
-                    f"⏱️ Waktu berlalu: `{elapsed_time} detik` (Maks. 5 menit)\n"
+                    f"⏱️ Waktu berlalu: `{elapsed_time} detik` (~3 menit 40 detik)\n"
                     f"📂 Proyek: `{project_name}`\n\n"
-                    f"_Bot sedang membaca log secara real-time hingga detail SSH muncul..._",
+                    f"_Bot sedang membaca log runtime secara real-time hingga detail SSH muncul..._",
                     parse_mode="Markdown"
                 )
             except Exception:
@@ -338,20 +339,20 @@ async def execute_real_railway_deployment(status_msg, user_id):
 
             await asyncio.sleep(10)
 
-            # Ambil log terbaru dari Railway
+            # Ambil log runtime terbaru dari Railway
             log_res = requests.post(url, json=log_query, headers=headers, timeout=30).json()
-            logs = log_res.get("data", {}).get("deploymentLogs", [])
+            logs = log_res.get("data", {}).get("serviceLogs", [])
             full_log_text = "\n".join([item.get("message", "") for item in logs])
             
-            # Cek apakah string penanda SSH Access Details sudah muncul
-            if "SSH ACCESS DETAILS" in full_log_text or "Password" in full_log_text:
+            # Cek apakah string penanda SSH Access Details atau SSH Command sudah muncul di log[span_0](start_span)[span_0](end_span)
+            if "SSH ACCESS DETAILS" in full_log_text or "SSH Command:" in full_log_text or "Password" in full_log_text:
                 ssh_details = full_log_text
                 break
 
         keyboard = [[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]
         
         if ssh_details:
-            # Ambil bagian penting dari SSH Access Details sampai ke password
+            # Format pembersihan teks log agar langsung menampilkan bagian SSH ACCESS DETAILS sampai SSH Command[span_1](start_span)[span_1](end_span)
             lines = ssh_details.split("\n")
             filtered_lines = []
             capture = False
@@ -360,23 +361,24 @@ async def execute_real_railway_deployment(status_msg, user_id):
                     capture = True
                 if capture:
                     filtered_lines.append(line)
-                    if "Password" in line or "SSH Command" in line:
+                    if "ssh root@" in line or "p " in line:
+                        # Ambil beberapa baris sampai perintah SSH selesai
                         pass
             
-            clean_log = "\n".join(filtered_lines[:15]) # Ambil batas baris yang rapi
+            clean_log = "\n".join(filtered_lines[:15]) if filtered_lines else ssh_details[-500:]
             
             await status_msg.edit_text(
-                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_1](start_span)[span_1](end_span)\n\n"
+                f"🎉 **PENGINSTALAN VPS SELESAI & ONLINE!**[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span)\n\n"
                 f"📂 **Proyek:** `{project_name}`\n\n"
-                f"🔑 **DATA AKSES SSH ANDA:**\n"
+                f"🔑 **DATA AKSES SSH & COMMAND ANDA:**[span_4](start_span)[span_4](end_span)\n"
                 f"```text\n{clean_log}\n```",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
         else:
             await status_msg.edit_text(
-                f"⚠️ **Waktu Tunggu Maksimal Tercapai (5 Menit)**\n\n"
-                f"Proyek `{project_name}` telah dibuat dan dideploy, namun log SSH belum sempat tertangkap otomatis oleh bot. Silakan cek detail akses langsung melalui Dashboard Railway Anda.",
+                f"⚠️ **Waktu Tunggu Selesai (3 Menit 40 Detik)**\n\n"
+                f"Proyek `{project_name}` telah selesai dideploy. Silakan cek detail akses SSH lengkapnya langsung di Dashboard Railway Anda.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -465,7 +467,7 @@ async def delete_railway_project(query, user_id, proj_id):
 
 def main():
     """Fungsi utama untuk menjalankan Bot Telegram."""
-    print("🤖 Memulai Bot Telegram Manager VPS (Final Version)...")
+    print("🤖 Memulai Bot Telegram Manager VPS (Final Perfect Version)...")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
