@@ -87,21 +87,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             proj_names += f" (dan {len(projects_list) - 3} lainnya)"
             
         status_text = (
-            f"🟢 **STATUS AKUN TERHUBUNG**\n"
+            f"✅ **STATUS AKUN TERHUBUNG**\n"
             f"• **Nama Sesi:** `{user_info.get('token_name')}`\n"
             f"• **Tipe Akun:** `{user_info.get('account_type')}`\n"
             f"• **Total Project Terpasang:** `{total_projects}`\n"
             f"• **Daftar Project:** `{proj_names}`"
         )
     else:
-        status_text = "🔴 **STATUS:** Belum login / mendaftarkan token Railway."
+        status_text = "❌ **STATUS:** Belum login / mendaftarkan token Railway."
 
     # Desain Tombol Berwarna Sesuai Fungsi (Kuning/Biru/Hijau/Abu-abu)
     keyboard = [
         [InlineKeyboardButton("🔑 Masukin Token", callback_data="menu_token"), InlineKeyboardButton("📖 Tutorial Daftar", callback_data="menu_tutorial")],
-        [InlineKeyboardButton("🟢 Buat & Deploy VPS", callback_data="menu_deploy")],
-        [InlineKeyboardButton("🔵 Cek & Kelola Proyek", callback_data="menu_list_projects")],
-        [InlineKeyboardButton("⚪ Status Sesi", callback_data="menu_status")]
+        [InlineKeyboardButton("📁 Buat & Deploy VPS", callback_data="menu_deploy")],
+        [InlineKeyboardButton("⚙️ Cek & Kelola Proyek", callback_data="menu_list_projects")],
+        [InlineKeyboardButton("🔁 Status Sesi", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -149,7 +149,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  `NamaToken TokenRailway`\n"
             "  Contoh: `paier 35beedf9-xxxx-xxxx`\n\n"
             "**3️⃣ Membuat & Mengakses VPS:**\n"
-            "• Klik 🟢 **Buat & Deploy VPS**.\n"
+            "• Klik 📁 **Buat & Deploy VPS**.\n"
             "• Bot akan mengonfigurasi instance dan memberikan detail login SSH."
         )
         keyboard = [[InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="back_home")]]
@@ -410,7 +410,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
                 except Exception:
                     pass
             
-            if "SSH ACCESS DETAILS" in combined_logs or "Password" in combined_logs:
+            if "AKUN VPS ANDA" in combined_logs or "Password" in combined_logs:
                 ssh_details = combined_logs
                 break
 
@@ -424,7 +424,7 @@ async def execute_real_railway_deployment(status_msg, user_id):
             filtered_lines = []
             capture = False
             for line in lines:
-                if "SSH ACCESS DETAILS" in line or "Host" in line:
+                if "AKUN VPS ANDA" in line or "Host" in line:
                     capture = True
                 if capture:
                     filtered_lines.append(line)
