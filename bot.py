@@ -40,14 +40,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menampilkan menu utama saat perintah /start dikirim."""
     keyboard = [
         [InlineKeyboardButton("🔑 Daftar Token (Login)", callback_data="menu_token")],
-        [InlineKeyboardButton("🚀 Buat VPS (Deploy vps2-main)", callback_data="menu_deploy")],
+        [InlineKeyboardButton("🚀 Buat VPS (Deploy Repo Gabut)", callback_data="menu_deploy")],
         [InlineKeyboardButton("ℹ️ Cek Status Akun", callback_data="menu_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_text = (
         "🤖 **Bot Manager VPS & Railway Deployment**\n\n"
-        "Selamat datang! Silakan daftarkan token Railway Anda untuk mulai mendeploy template `vps2-main` secara otomatis."
+        "Selamat datang! Silakan daftarkan token Railway Anda untuk mulai mendeploy public repository `MhmdSairi/gabut` secara otomatis."
     )
     
     if update.message:
@@ -79,7 +79,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        await query.message.edit_text("🚀 **Sedang Mendeploy Template `vps2-main` ke Akun Railway Anda...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
+        await query.message.edit_text("🚀 **Sedang Mendeploy Repository `MhmdSairi/gabut` ke Akun Railway Anda...**\nMohon tunggu beberapa saat.", parse_mode="Markdown")
         await execute_railway_api_deployment(query, user_id)
         
     elif query.data == "menu_status":
@@ -124,20 +124,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_for_token'] = False
         
         keyboard = [
-            [InlineKeyboardButton("🚀 Lanjut Buat VPS (Deploy)", callback_data="menu_deploy")],
+            [InlineKeyboardButton("🚀 Lanjut Buat VPS (Deploy Gabut)", callback_data="menu_deploy")],
             [InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]
         ]
         
         await msg_wait.edit_text(
             f"✅ **Login Berhasil & Token Disimpan!** 🎉\n\n"
             f"• Nama Token: `{token_name}`\n\n"
-            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS** di bawah untuk mendeploy folder `vps2-main`.",
+            f"Sekarang Anda bisa menekan tombol **Lanjut Buat VPS** di bawah untuk mendeploy repo `MhmdSairi/gabut`.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
 async def execute_railway_api_deployment(query, user_id):
-    """Membuat project baru di Railway user dan mendeploy file dari folder vps2-main secara otomatis."""
+    """Membuat project baru di Railway user dan mendeploy public repository MhmdSairi/gabut."""
     token_data = USER_TOKENS.get(user_id)
     railway_token = token_data['token']
     
@@ -149,7 +149,7 @@ async def execute_railway_api_deployment(query, user_id):
     
     # 1. Buat Project Baru di Akun Railway User
     create_project_query = {
-        "query": "mutation { projectCreate(input: { name: \"VPS-vps2-main\" }) { id name } }"
+        "query": "mutation { projectCreate(input: { name: \"VPS-Gabut-Project\" }) { id name } }"
     }
     
     try:
@@ -168,7 +168,7 @@ async def execute_railway_api_deployment(query, user_id):
         project_data = result.get("data", {}).get("projectCreate", {})
         project_id = project_data.get("id")
         
-        # 2. Tambahkan Service yang otomatis mengarah ke folder/konfigurasi vps2-main
+        # 2. Tambahkan Service yang sumbernya langsung dari public repository MhmdSairi/gabut
         create_service_query = {
             "query": """
                 mutation ServiceCreate($input: ServiceCreateInput!) {
@@ -181,21 +181,32 @@ async def execute_railway_api_deployment(query, user_id):
             "variables": {
                 "input": {
                     "projectId": project_id,
-                    "name": "vps-service",
+                    "name": "gabut-vps-service",
                     "source": {
-                        "image": "ghcr.io/railwayapp/nixpacks:latest"
+                        "repo": "MhmdSairi/gabut",
+                        "branch": "main"
                     }
                 }
             }
         }
         
-        requests.post(url, json=create_service_query, headers=headers, timeout=30)
+        service_res = requests.post(url, json=create_service_query, headers=headers, timeout=30)
+        service_result = service_res.json()
+        
+        if "errors" in service_result:
+            err_service = service_result["errors"][0].get("message", "Gagal deploy repo")
+            await query.message.reply_text(
+                f"❌ **Proyek Dibuat, tapi Gagal Deploy Repository:**\n`{err_service}`",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="back_home")]]),
+                parse_mode="Markdown"
+            )
+            return
         
         await query.message.edit_text(
-            f"✅ **Deployment Template `vps2-main` Berhasil!** 🎉\n\n"
+            f"✅ **Deployment Repo `MhmdSairi/gabut` Berhasil!** 🎉\n\n"
             f"• Project ID: `{project_id}`\n"
-            f"• Direktori Sumber: `vps2-main`\n\n"
-            f"🚀 Proyek VPS Anda telah berhasil diinisialisasi dan sedang dibangun otomatis di dalam dashboard akun Railway Anda.",
+            f"• Repository: `https://github.com/MhmdSairi/gabut`\n\n"
+            f"🚀 Railway sedang menarik kode dari public repository Anda dan membangun VPS di dalam akun Railway pengguna secara otomatis.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="back_home")]]),
             parse_mode="Markdown"
         )
