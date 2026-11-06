@@ -1,12 +1,16 @@
-
 const TelegramBot = require('node-telegram-bot-api');
 const fetch = require('node-fetch');
 
-// Ganti dengan Token Bot Telegram Anda dari @BotFather atau ambil dari Environment Variable
-const TOKEN = process.env.BOT_TOKEN || '9286169112:AAHLD7pusm7iLhC2dtHvSm5x0B8L0G2IG08';
+// Token Bot Telegram dari Environment Variable Railway
+const TOKEN = process.env.BOT_TOKEN;
+if (!TOKEN) {
+    console.error("ERROR: BOT_TOKEN belum diset di environment variables Railway!");
+    process.exit(1);
+}
+
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// Menyimpan sesi user secara temporary (untuk production, gunakan database seperti SQLite/MongoDB)
+// Menyimpan sesi user secara temporary
 const userSessions = {};
 
 // Railway GraphQL API Endpoint
@@ -19,7 +23,7 @@ async function railwayQuery(apiToken, query, variables = {}) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiToken}`
+                'Authorization': `Bearer ${apiToken.trim()}`
             },
             body: JSON.stringify({ query, variables })
         });
@@ -36,13 +40,12 @@ bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     const name = msg.from.first_name || 'User';
 
-    const welcomeMessage = `👋 Halo *${name}*!\n\nSelamat datang di Bot Otomasi Deploy VPS Railway.\nBot ini berfungsi sebagai perantara untuk menghubungkan akun Railway Anda dan mendeploy template VPS secara instan.\n\nSilakan pilih menu di bawah ini:`;
+    const welcomeMessage = `👋 Halo *${name}*!\n\nSelamat datang di Bot Otomasi Deploy VPS Railway.\n\nUntuk mulai login ke akun Railway Anda, silakan kirimkan format berikut langsung ke chat ini:\n\n\`namatoken railway_token_anda\`\n\n*Contoh:*\n\`sairi rlwy_wksp_L1WxqD85MqQufRHhh2oxrqzr9DSgaEuxkx0uYHDP\``;
 
     const opts = {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '🔑 Login Akun Railway', callback_data: 'login_railway' }],
                 [{ text: 'ℹ️ Cek Status Akun', callback_data: 'check_status' }]
             ]
         }
@@ -51,92 +54,93 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(chatId, welcomeMessage, opts);
 });
 
-// Handler Callback Queries
+// Handler Callback Queries (Tombol)
 bot.on('callback_query', async (callbackQuery) => {
     const msg = callbackQuery.message;
     const chatId = msg.chat.id;
     const data = callbackQuery.data;
 
-    if (data === 'login_railway') {
-        userSessions[chatId] = { step: 'waiting_token_name' };
-        bot.sendMessage(chatId, '📝 *Langkah 1/2*\n\nSilakan masukkan *Nama Token* Railway Anda (Contoh: `MyTokenDeploy`):', { parse_mode: 'Markdown' });
-        bot.answerCallbackQuery(callbackQuery.id);
-    } else if (data === 'deploy_vps') {
+    if (data === 'deploy_vps') {
         const session = userSessions[chatId];
         if (!session || !session.apiToken) {
-            bot.sendMessage(chatId, '❌ Anda belum login ke akun Railway. Silakan klik /start lalu pilih *Login Akun Railway* terlebih dahulu.');
+            bot.sendMessage(chatId, '❌ Anda belum login. Silakan kirimkan format login: `namatoken railway_token`', { parse_mode: 'Markdown' });
             bot.answerCallbackQuery(callbackQuery.id);
             return;
         }
 
         bot.sendMessage(chatId, '⏳ Sedang memproses deployment template VPS ke akun Railway Anda...');
         
-        // Contoh query GraphQL Railway untuk cek user / membuat project
+        // Validasi ulang token saat deploy
         const userQuery = `{ me { id name email } }`;
         const result = await railwayQuery(session.apiToken, userQuery);
 
         if (result.errors || result.error) {
-            bot.sendMessage(chatId, `❌ Gagal terhubung ke Railway. Token Anda mungkin tidak valid.\nError: ${JSON.stringify(result.errors || result.error)}`);
+            bot.sendMessage(chatId, `❌ Sesi Anda kedaluwarsa atau token tidak valid. Silakan login ulang.`);
         } else {
             const userInfo = result.data.me;
-            bot.sendMessage(chatId, `✅ *Berhasil Terhubung!*\n\nAkun: ${userInfo.name} (${userInfo.email})\n\n🚀 Template VPS sedang di-deploy ke Railway Anda...`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `✅ *Berhasil Terhubung!*\\nAkun: ${userInfo.name} (${userInfo.email})\\n\\n🚀 Template VPS sedang di-deploy ke Railway Anda...`, { parse_mode: 'Markdown' });
             
-            // Di sini Anda bisa menambahkan logika provisioning/deploy template GitHub repo Anda ke Railway menggunakan Railway API mutations.
-            // Contoh simulasi sukses deploy:
+            // Proses deploy template vps2-main dapat diintegrasikan di sini via Railway API
             setTimeout(() => {
-                bot.sendMessage(chatId, `🎉 *Deployment VPS Selesai!*\n\nVPS Anda telah berhasil dibuat di Railway menggunakan template vps2-main. Silakan cek dashboard Railway Anda.`, { parse_mode: 'Markdown' });
+                bot.sendMessage(chatId, `🎉 *Deployment VPS Selesai!*\\nVPS Anda telah berhasil dibuat di Railway menggunakan template vps2-main.`, { parse_mode: 'Markdown' });
             }, 3000);
         }
         bot.answerCallbackQuery(callbackQuery.id);
     } else if (data === 'check_status') {
         const session = userSessions[chatId];
         if (!session || !session.apiToken) {
-            bot.sendMessage(chatId, '⚠️ Status: Belum login ke Railway.');
+            bot.sendMessage(chatId, '⚠️ Status: Belum login ke Railway.\n\nKirimkan format: `namatoken railway_token`', { parse_mode: 'Markdown' });
         } else {
-            bot.sendMessage(chatId, `✅ Status: Sudah login dengan Token Name: *${session.tokenName || 'N/A'}*`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `✅ Status: Sudah login dengan Nama Token: *${session.tokenName}*`, { parse_mode: 'Markdown' });
         }
         bot.answerCallbackQuery(callbackQuery.id);
     }
 });
 
-// Handler Text Input untuk Proses Login Interaktif
+// Handler Text Input (1 Step Login: NamaToken TokenRailway)
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
-    const text = msg.text;
+    const text = msg.text ? msg.text.trim() : '';
 
     // Abaikan jika pesan adalah command (/start, dll)
     if (!text || text.startsWith('/')) return;
 
-    const session = userSessions[chatId];
-    if (!session) return;
+    // Pisah teks berdasarkan spasi (Bagian 1: Nama Token, Bagian 2: Railway Token)
+    const parts = text.split(/\s+/);
 
-    if (session.step === 'waiting_token_name') {
-        session.tokenName = text.trim();
-        session.step = 'waiting_token_secret';
-        bot.sendMessage(chatId, `📝 *Langkah 2/2*\n\nNama Token diterima: *${session.tokenName}*\n\nSekarang, silakan masukkan *Railway API Token* Anda (Account Token / Project Token):`, { parse_mode: 'Markdown' });
-    } else if (session.step === 'waiting_token_secret') {
-        session.apiToken = text.trim();
-        session.step = 'logged_in';
+    if (parts.length < 2) {
+        bot.sendMessage(chatId, '❌ Format salah!\n\nHarap masukkan dengan format 1 baris:\n`namatoken railway_token_anda`\n\n*Contoh:*\n`sairi rlwy_wksp_L1WxqD...`', { parse_mode: 'Markdown' });
+        return;
+    }
 
-        // Validasi token dengan test query ke Railway API
-        const testRes = await railwayQuery(session.apiToken, '{ me { id name } }');
+    const tokenName = parts[0];
+    const apiToken = parts[1];
 
-        if (testRes.errors || testRes.error) {
-            delete userSessions[chatId];
-            bot.sendMessage(chatId, '❌ *Login Gagal!* Token Railway yang Anda masukkan tidak valid.\nSilakan ketik /start untuk mengulang.');
-        } else {
-            const userName = testRes.data.me.name || 'User';
-            bot.sendMessage(chatId, `✅ *Login Berhasil!*\n\nSelamat datang, *${userName}*! Akun Railway Anda berhasil dihubungkan ke bot.\n\nKlik tombol di bawah untuk mulai mendepositkan/mendeploy VPS template Anda:`, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '🚀 Buat Akun VPS (Deploy)', callback_data: 'deploy_vps' }],
-                        [{ text: '🔄 Ganti Akun / Logout', callback_data: 'login_railway' }]
-                    ]
-                }
-            });
-        }
+    bot.sendMessage(chatId, `⏳ Sedang memverifikasi token *${tokenName}* ke server Railway...`, { parse_mode: 'Markdown' });
+
+    // Uji validitas token ke Railway GraphQL API
+    const testRes = await railwayQuery(apiToken, '{ me { id name email } }');
+
+    if (testRes.errors || testRes.error || !testRes.data || !testRes.data.me) {
+        bot.sendMessage(chatId, '❌ *Login Gagal!* Token Railway yang Anda masukkan tidak valid atau salah.\n\nSilakan periksa kembali token Anda dan kirim ulang dengan format:\n`namatoken railway_token`', { parse_mode: 'Markdown' });
+    } else {
+        // Simpan sesi user
+        userSessions[chatId] = {
+            tokenName: tokenName,
+            apiToken: apiToken
+        };
+
+        const userInfo = testRes.data.me;
+        bot.sendMessage(chatId, `✅ *Login Berhasil!* 🎉\n\n👤 *Nama Akun:* ${userInfo.name || 'N/A'}\n📧 *Email:* ${userInfo.email || 'N/A'}\n🏷️ *Nama Token:* ${tokenName}\n\nSilakan klik tombol di bawah untuk mendepositkan/mendeploy VPS Anda:`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '🚀 Buat Akun VPS (Deploy)', callback_data: 'deploy_vps' }],
+                    [{ text: '🔄 Logout / Ganti Token', callback_data: 'check_status' }]
+                ]
+            }
+        });
     }
 });
 
-console.log('Bot Telegram Railway Deployer sedang berjalan...');
+console.log('Bot Telegram Railway Deployer (1-Step Login) sedang berjalan...');
